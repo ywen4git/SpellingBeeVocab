@@ -23,7 +23,10 @@ words through a Leitner-box spaced-repetition flashcard system.
 1. Screenshot → reviewed word list → flashcards in under a minute of user effort.
 2. Retention that actually works: due-date-driven Leitner review, not an endless queue.
 3. Fully usable offline after first load, except definition fetching.
-4. User data survives: versioned schema, export/import backup.
+4. User data survives and travels: versioned schema, and export/import backup
+   whose file is the exact persisted database (including every word's box, due
+   date, status, and lapses) — importing it on a new device resumes progress
+   exactly.
 
 ### Non-goals (v1)
 
@@ -162,17 +165,27 @@ confirm pattern for destructive actions.
 1. **Upload:** file input, `accept="image/*"` (`capture` omitted so the photo
    library is the default on Android). On selection, run OCR with a progress bar
    fed by tesseract's progress callbacks ("Loading OCR engine… / Recognizing…").
-2. **Review:** parsed candidates (see §7) shown as a checkbox list, all checked by
-   default, alphabetized. Sub-line shows counts:
-   "12 candidates · 3 already known (skipped) · 5 filtered as UI text".
-   User unchecks OCR junk. If zero candidates, show guidance
-   ("Couldn't find words — try a tighter crop of the answers list").
+2. **Review:** two sections, alphabetized, with a sub-line of counts
+   ("12 new · 3 already in collection · 5 filtered as UI text"). If zero new
+   candidates, show guidance ("Couldn't find words — try a tighter crop of the
+   answers list").
+   - **New candidates:** checkbox list, all checked by default (uncheck = OCR
+     junk, not imported). Each checked word has a two-value toggle, default
+     **Learn**; switching to **Already know** imports it directly as
+     `mastered` — it joins the collection and stats and won't reappear as a
+     candidate, but is never shown as a flashcard.
+   - **Already in your collection:** words the OCR found that are already in the
+     database, listed with their current status/box badge, **unchecked by
+     default** (unchecked = no change). Checking one resets it to learning,
+     box 1, due now (its definition and `lapses` are kept; no re-fetch).
 3. **Commit:** button "Add N words". Definitions are fetched sequentially with a
-   per-word progress line ("Fetching definitions… 7/12"). When done, words are
-   committed to box 1 and a toast summarizes: "12 added, 2 without definitions".
-   Words with failed lookups are committed anyway with the placeholder (§8).
-   Commit is atomic at the end of fetching (single db write), but fetching is
-   interruptible: a Cancel button commits nothing.
+   per-word progress line ("Fetching definitions… 7/12") for all newly imported
+   words — including "Already know" ones, so the Words browser still shows their
+   definitions. When done, a toast summarizes: "10 added to learning, 2 marked
+   known, 1 reset to learning, 2 without definitions". Words with failed lookups
+   are committed anyway with the placeholder (§8). Commit is atomic at the end
+   of fetching (single db write), but fetching is interruptible: a Cancel button
+   commits nothing (including resets).
 
 ### 6.3 Words
 
@@ -193,7 +206,9 @@ confirm pattern for destructive actions.
   → preview line "Backup contains 214 words; 30 new, 184 already present" →
   confirm → **merge**: unknown words are added as-is; for words present in both,
   the record with the newer `addedAt` wins entirely, except `status: 'mastered'`
-  on either side always wins (never un-master via import).
+  on either side always wins (never un-master via import). Importing into a
+  fresh install (the new-device flow) is therefore an exact restore — every
+  word resumes with its saved box, due date, and stats.
 - **Reset:** danger-zone button with inline type-to-confirm ("type DELETE"),
   clears the db key.
 
@@ -210,15 +225,17 @@ binarization needed.
   callback surfaces tesseract's `status`/`progress` to the UI. Errors reject with
   a typed `OcrError` so the screen can show a human message.
 - **`parser.ts`:** `parseCandidates(rawText, existingWords: Set<string>)` returns
-  `{ candidates: string[], skippedKnown: string[], filteredUi: string[] }`:
+  `{ candidates: string[], alreadyKnown: string[], filteredUi: string[] }`
+  (the Add screen joins `alreadyKnown` against the db for status badges):
   1. Uppercase the text; extract `/[A-Z]{4,}/g` matches; dedupe.
   2. Drop blocklist hits (exported constant `UI_BLOCKLIST`): NYT chrome words —
      `PANGRAM, ANSWERS, YESTERDAY, TODAY, TODAYS, YESTERDAYS, WORDS, POINTS,
      GENIUS, QUEEN, SPELLING, GAMES, EDITED, FOUND, RANKINGS`, month names
      (`JANUARY…DECEMBER`), and day names (`SUNDAY…SATURDAY`). The list lives in
      one place and is trivially extendable when new junk shows up.
-  3. Drop words already in the database (any status).
-  4. Sort alphabetically.
+  3. Split out words already in the database (any status) into `alreadyKnown`
+     for the review screen's second section (§6.2).
+  4. Sort each list alphabetically.
 - The review checklist (§6.2) is the final filter for anything heuristics miss —
   the design deliberately prefers a light blocklist + human review over clever
   heuristics that might eat real words. Blocklist entries are NYT chrome words
@@ -282,11 +299,13 @@ launch; no update-prompt UI in v1).
   - `leitner.ts`: promotion/demotion paths, 4 AM boundary math (incl. late-night
     review), due ordering, `nextDueAt`.
   - `parser.ts`: fixture file of real OCR output from an NYT answers screenshot
-    (checked into `src/lib/__fixtures__/`), blocklist, dedupe, known-word skip.
+    (checked into `src/lib/__fixtures__/`), blocklist, dedupe, already-known
+    split.
   - `storage.ts`: empty load, round-trip, corrupt-value quarantine, legacy-key
     migration, import merge rules (newer wins, mastered wins).
   - `dictionary.ts`: mocked fetch — success shape, 404, 429-retry, abort.
-- **Component (RTL):** Add-wizard review flow (uncheck → commit count), Study
+- **Component (RTL):** Add-wizard review flow (uncheck → commit count,
+  "Already know" → mastered, reset-to-learning checkbox), Study
   grade-advances-card, Words edit/delete.
 - **Manual smoke checklist** (in README): install to Android home screen,
   airplane-mode OCR, real screenshot end-to-end, export → reset → import.
