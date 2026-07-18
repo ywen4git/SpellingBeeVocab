@@ -6,7 +6,7 @@ import { DB_KEY } from '../lib/storage';
 it('shows the Study tab by default and switches tabs', async () => {
   render(<App />);
   expect(screen.getByRole('heading', { name: /bee vocab builder/i })).toBeInTheDocument();
-  expect(screen.getByRole('heading', { name: 'Study' })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: /all caught up/i })).toBeInTheDocument();
   await userEvent.click(screen.getByRole('button', { name: /^words$/i }));
   expect(screen.getByRole('heading', { name: 'Words' })).toBeInTheDocument();
 });
