@@ -184,14 +184,14 @@ export default function AddScreen() {
                       onChange={(e) => setCandidate(c.word, { checked: e.target.checked })}
                       className="h-5 w-5 accent-amber-500"
                     />
-                    <label htmlFor={`cand-${c.word}`} className="flex-1 font-semibold">
+                    <label htmlFor={`cand-${c.word}`} className="flex min-h-[44px] flex-1 items-center font-semibold">
                       {c.word}
                     </label>
                     {c.checked && (
                       <button
                         onClick={() => setCandidate(c.word, { know: !c.know })}
                         aria-label={`${c.word}: ${c.know ? 'already know' : 'learn'}`}
-                        className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                        className={`min-h-[44px] rounded-full px-3 py-1 text-xs font-semibold ${
                           c.know ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
                         }`}
                       >
@@ -218,7 +218,7 @@ export default function AddScreen() {
                       onChange={(e) => setKnown(k.word, e.target.checked)}
                       className="h-5 w-5 accent-amber-500"
                     />
-                    <label htmlFor={`known-${k.word}`} className="flex-1">
+                    <label htmlFor={`known-${k.word}`} className="flex min-h-[44px] flex-1 items-center gap-1">
                       <span className="font-semibold">{k.word}</span>{' '}
                       <span className="text-xs text-slate-400">
                         {k.current.status === 'mastered' ? 'mastered' : `Box ${k.current.box}`}
