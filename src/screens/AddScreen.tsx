@@ -100,7 +100,7 @@ export default function AddScreen() {
           type="file"
           accept="image/png,image/jpeg"
           onChange={handleFile}
-          className="w-full text-sm text-slate-500 file:mr-4 file:rounded-xl file:border-0 file:bg-amber-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-amber-700"
+          className="min-h-[44px] file:min-h-[44px] w-full text-sm text-slate-500 file:mr-4 file:rounded-xl file:border-0 file:bg-amber-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-amber-700"
         />
         <p className="mt-2 text-xs text-slate-400">
           Works best with the NYT app's "Yesterday's Answers" page.

@@ -29,7 +29,14 @@ export default function DataScreen() {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    const incoming = parseBackup(await file.text());
+    let text: string;
+    try {
+      text = await file.text();
+    } catch {
+      toast.show('Not a valid BeeVocab backup file.');
+      return;
+    }
+    const incoming = parseBackup(text);
     if (!incoming) {
       toast.show('Not a valid BeeVocab backup file.');
       return;
@@ -78,12 +85,15 @@ export default function DataScreen() {
           type="file"
           accept="application/json,.json"
           onChange={handleImportFile}
-          className="w-full text-sm text-slate-500 file:mr-4 file:rounded-xl file:border-0 file:bg-slate-100 file:px-4 file:py-2 file:text-sm file:font-semibold"
+          className="min-h-[44px] file:min-h-[44px] w-full text-sm text-slate-500 file:mr-4 file:rounded-xl file:border-0 file:bg-slate-100 file:px-4 file:py-2 file:text-sm file:font-semibold"
         />
         {preview && (
           <div className="mt-3 rounded-xl bg-slate-50 p-3 text-sm">
             <p>
-              Backup contains {Object.keys(preview.incoming.words).length} words; {preview.added} new, {preview.existing} already present.
+              {(() => {
+                const count = Object.keys(preview.incoming.words).length;
+                return `Backup contains ${count} ${count === 1 ? 'word' : 'words'}; ${preview.added} new, ${preview.existing} already present.`;
+              })()}
             </p>
             <div className="mt-2 flex gap-2">
               <button
