@@ -47,6 +47,18 @@ describe('loadDb', () => {
     expect(localStorage.getItem(LEGACY_KEY)).toBeNull();
     expect(loadDb(NOW).db.words.AGARIC).toBeDefined(); // persisted under the new key
   });
+
+  it('does not throw when the quarantine write itself fails', () => {
+    localStorage.setItem(DB_KEY, 'not json{');
+    const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota', 'QuotaExceededError');
+    });
+    const r = loadDb(NOW);
+    spy.mockRestore();
+    expect(r.recoveredFromCorrupt).toBe(true);
+    expect(r.db).toEqual(emptyDb());
+    expect(localStorage.getItem(DB_KEY)).toBe('not json{'); // original preserved
+  });
 });
 
 describe('saveDb', () => {
@@ -103,5 +115,15 @@ describe('mergeDb', () => {
       { schemaVersion: 1, words: { TIARA: learningNew } },
     );
     expect(r.merged.words.TIARA.status).toBe('mastered');
+  });
+
+  it('forcing mastered on a learning winner also restores box 3', () => {
+    const masteredOld = knownWordEntry('TIARA', 'a crown', 'api', NOW - 10);
+    const learningNew = newWordEntry('TIARA', 'a crown', 'api', NOW);
+    const r = mergeDb(
+      { schemaVersion: 1, words: { TIARA: masteredOld } },
+      { schemaVersion: 1, words: { TIARA: learningNew } },
+    );
+    expect(r.merged.words.TIARA).toMatchObject({ status: 'mastered', box: 3 });
   });
 });

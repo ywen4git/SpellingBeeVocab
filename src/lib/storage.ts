@@ -18,8 +18,12 @@ export function loadDb(now: number): LoadResult {
     const db = parseBackup(raw);
     if (db) return { db, recoveredFromCorrupt: false, migratedLegacy: false };
     // Never silently discard user data: quarantine it, then start fresh.
-    localStorage.setItem(CORRUPT_KEY, raw);
-    localStorage.removeItem(DB_KEY);
+    try {
+      localStorage.setItem(CORRUPT_KEY, raw);
+      localStorage.removeItem(DB_KEY);
+    } catch {
+      // Quota full: leave the unreadable payload in place rather than destroy it.
+    }
     return { db: emptyDb(), recoveredFromCorrupt: true, migratedLegacy: false };
   }
   const legacy = readLegacy(now);
@@ -115,7 +119,7 @@ export function mergeDb(current: VocabDb, incoming: VocabDb): MergeResult {
     const winner = inc.addedAt > cur.addedAt ? inc : cur;
     const anyMastered = inc.status === 'mastered' || cur.status === 'mastered';
     words[key] = anyMastered && winner.status !== 'mastered'
-      ? { ...winner, status: 'mastered' } // never un-master via import
+      ? { ...winner, status: 'mastered', box: 3 } // never un-master via import
       : winner;
   }
   return { merged: { schemaVersion: SCHEMA_VERSION, words }, added, existing };
