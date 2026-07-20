@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "setup:tesseract": "node scripts/setup-tesseract-assets.mjs"
+    "setup:tesseract": "node scripts/setup-tesseract-assets.mjs",
+    "icons": "node scripts/generate-icons.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -26,9 +27,11 @@
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^6.0.3",
     "jsdom": "^29.1.1",
+    "sharp": "^0.35.3",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.1.5",
+    "vite-plugin-pwa": "^1.3.0",
     "vitest": "^4.1.10"
   }
 }
