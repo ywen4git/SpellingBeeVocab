@@ -9,7 +9,7 @@ Design spec: `docs/superpowers/specs/2026-07-12-spelling-bee-pwa-design.md`
 
 ```bash
 npm install
-npm run setup:tesseract   # one-time: self-host OCR assets (~15 MB, gitignored)
+npm run setup:tesseract   # one-time: self-host OCR assets (~54 MB currently, gitignored — a fast-follow will prune unused WASM variants)
 npm run dev               # http://localhost:5173/SpellingBeeVocab/
 ```
 

@@ -30,7 +30,10 @@ export default defineConfig({
       },
       workbox: {
         // Precache the whole shell INCLUDING the self-hosted tesseract worker/WASM/
-        // traineddata so OCR works fully offline after first load (~15 MB total).
+        // traineddata so OCR works fully offline after first load. This adds ~54 MB to the
+        // precache (tesseract.js-core currently ships every WASM variant, most unused at
+        // runtime — pruning this to only the LSTM cores actually loaded is a tracked
+        // fast-follow); acceptable for a personal tool in the meantime.
         globPatterns: ['**/*.{js,css,html,png,svg,wasm,gz}'],
         maximumFileSizeToCacheInBytes: 30 * 1024 * 1024,
       },
