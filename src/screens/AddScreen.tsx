@@ -45,7 +45,7 @@ export default function AddScreen() {
         name: 'review',
         candidates: parsed.candidates.map((word) => ({ word, checked: true, know: false })),
         known: parsed.alreadyKnown.map((word) => ({ word, reset: false, current: db.words[word] })),
-        filteredCount: parsed.filteredUi.length,
+        filteredCount: parsed.filteredUi.length + parsed.filteredInvalidLetters.length,
       });
     } catch {
       toast.show('Could not read that image — try again with a clearer screenshot.');
@@ -156,7 +156,7 @@ export default function AddScreen() {
   return (
     <div className="flex flex-col gap-4">
       <p className="text-sm text-slate-500">
-        {phase.candidates.length} new · {phase.known.length} already in collection · {phase.filteredCount} filtered as UI text
+        {phase.candidates.length} new · {phase.known.length} already in collection · {phase.filteredCount} filtered out
       </p>
 
       {phase.candidates.length === 0 && phase.known.length === 0 ? (

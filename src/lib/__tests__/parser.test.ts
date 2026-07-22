@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseCandidates, UI_BLOCKLIST } from '../parser';
 import fixture from '../__fixtures__/nyt-answers-ocr.txt?raw';
+import wordListFixture from '../__fixtures__/nyt-word-list-ocr.txt?raw';
 
 describe('parseCandidates', () => {
   it('extracts 4+ letter words, uppercased, deduped, sorted', () => {
@@ -32,5 +33,31 @@ describe('parseCandidates', () => {
 
   it('exports the blocklist for reuse', () => {
     expect(UI_BLOCKLIST.has('PANGRAM')).toBe(true);
+  });
+
+  it('drops chrome above the hive letter row and keeps valid answers', () => {
+    const r = parseCandidates(wordListFixture, new Set());
+    expect(r.candidates).not.toContain('STATS');
+    expect(r.candidates).not.toContain('GREATS');
+    expect(r.candidates).toContain('GALLIVANT');
+    expect(r.candidates).toContain('NAVIGATING');
+    expect(r.filteredInvalidLetters).toEqual([]);
+  });
+
+  it('rejects words containing a letter outside the detected hive', () => {
+    const r = parseCandidates('V A G I L N T\nGALLIVANT PANDA', new Set());
+    expect(r.candidates).toEqual(['GALLIVANT']);
+    expect(r.filteredInvalidLetters).toEqual(['PANDA']);
+  });
+
+  it('rejects hive-letter words missing the center letter', () => {
+    const r = parseCandidates('V A G I L N T\nGALLIVANT GIANT', new Set());
+    expect(r.candidates).toEqual(['GALLIVANT']);
+    expect(r.filteredInvalidLetters).toEqual(['GIANT']);
+  });
+
+  it('does not filter by hive letters when no letter row is present', () => {
+    const r = parseCandidates(fixture, new Set(['TIARA']));
+    expect(r.filteredInvalidLetters).toEqual([]);
   });
 });
