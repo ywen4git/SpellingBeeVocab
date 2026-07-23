@@ -61,4 +61,20 @@ describe('parseCandidates', () => {
     const r = parseCandidates(fixture, new Set(['TIARA']));
     expect(r.filteredInvalidLetters).toEqual([]);
   });
+
+  it('merges in a boosted-pass word recovered from a low-contrast original', () => {
+    const r = parseCandidates('VAGILNT\nGALLIVANT', new Set(), 'GALLIVANT VITAL');
+    expect(r.candidates).toEqual(['GALLIVANT', 'VITAL']);
+  });
+
+  it('ignores the boosted pass entirely when no hive was found in the original', () => {
+    const r = parseCandidates('GALLIVANT', new Set(), 'VITAL');
+    expect(r.candidates).toEqual(['GALLIVANT']);
+  });
+
+  it('still routes boosted-pass noise through hive validation, not straight to candidates', () => {
+    const r = parseCandidates('VAGILNT\nGALLIVANT', new Set(), 'GALLIVANT PANDA');
+    expect(r.candidates).toEqual(['GALLIVANT']);
+    expect(r.filteredInvalidLetters).toEqual(['PANDA']);
+  });
 });

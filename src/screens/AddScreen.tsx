@@ -39,8 +39,8 @@ export default function AddScreen() {
     if (!file) return;
     setPhase({ name: 'ocr', progress: { label: 'Loading OCR engine…', progress: 0 } });
     try {
-      const text = await recognizeImage(file, (progress) => setPhase({ name: 'ocr', progress }));
-      const parsed = parseCandidates(text, new Set(Object.keys(db.words)));
+      const { text, boostedText } = await recognizeImage(file, (progress) => setPhase({ name: 'ocr', progress }));
+      const parsed = parseCandidates(text, new Set(Object.keys(db.words)), boostedText);
       setPhase({
         name: 'review',
         candidates: parsed.candidates.map((word) => ({ word, checked: true, know: false })),

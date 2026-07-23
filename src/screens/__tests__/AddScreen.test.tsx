@@ -7,7 +7,7 @@ import { knownWordEntry } from '../../lib/leitner';
 import { SCHEMA_VERSION } from '../../lib/types';
 
 vi.mock('../../lib/ocr', () => ({
-  recognizeImage: vi.fn(async () => 'AGARIC NAIAD PANGRAM TIARA'),
+  recognizeImage: vi.fn(async () => ({ text: 'AGARIC NAIAD PANGRAM TIARA', boostedText: '' })),
   terminateOcr: vi.fn(async () => {}),
 }));
 

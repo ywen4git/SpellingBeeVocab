@@ -49,12 +49,25 @@ function isValidForHive(word: string, hive: HiveLetters): boolean {
   return word.includes(hive.center) && [...word].every((ch) => hive.letters.has(ch));
 }
 
+/**
+ * `boostedText` is a second OCR pass over a contrast-boosted copy of the
+ * same image, which recovers faint/low-contrast answer words (e.g. one
+ * mid-fade-in on the app's reveal screen) that the original pass misses.
+ * That contrast boost also destroys the hive letter row itself, so it's
+ * only folded in once the hive has already been found in `rawText` — the
+ * hive-letter validation below is what makes the boosted pass's extra OCR
+ * noise safe to merge in; without a confirmed hive there's no such net,
+ * so an unmatched `boostedText` is ignored entirely rather than risking
+ * new false-positive candidates.
+ */
 export function parseCandidates(
   rawText: string,
   existingWords: ReadonlySet<string>,
+  boostedText?: string,
 ): ParseResult {
   const found = findHiveLetters(rawText);
-  const text = found ? found.rest : rawText;
+  let text = found ? found.rest : rawText;
+  if (found && boostedText) text += `\n${boostedText}`;
   const matches = text.toUpperCase().match(/[A-Z]{4,}/g) ?? [];
   const candidates: string[] = [];
   const alreadyKnown: string[] = [];
