@@ -19,6 +19,8 @@ export interface ParseResult {
   alreadyKnown: string[];
   filteredUi: string[];
   filteredInvalidLetters: string[];
+  /** The 7 hive letters detected in the screenshot (center letter first), or null if none was found. */
+  hive: { center: string; letters: string[] } | null;
 }
 
 interface HiveLetters {
@@ -83,5 +85,6 @@ export function parseCandidates(
   alreadyKnown.sort();
   filteredUi.sort();
   filteredInvalidLetters.sort();
-  return { candidates, alreadyKnown, filteredUi, filteredInvalidLetters };
+  const hive = found ? { center: found.hive.center, letters: [...found.hive.letters] } : null;
+  return { candidates, alreadyKnown, filteredUi, filteredInvalidLetters, hive };
 }

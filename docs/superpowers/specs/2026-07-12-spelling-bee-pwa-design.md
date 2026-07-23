@@ -165,10 +165,17 @@ confirm pattern for destructive actions.
 1. **Upload:** file input, `accept="image/*"` (`capture` omitted so the photo
    library is the default on Android). On selection, run OCR with a progress bar
    fed by tesseract's progress callbacks ("Loading OCR engine… / Recognizing…").
-2. **Review:** two sections, alphabetized, with a sub-line of counts
-   ("12 new · 3 already in collection · 5 filtered as UI text"). If zero new
-   candidates, show guidance ("Couldn't find words — try a tighter crop of the
-   answers list").
+2. **Review:** a puzzle-letters banner first, then two sections, alphabetized,
+   with a sub-line of counts ("12 new · 3 already in collection · 5 filtered
+   out"). If zero new candidates, show guidance ("Couldn't find words — try a
+   tighter crop of the answers list").
+   - **Puzzle-letters banner:** if `parseCandidates`'s `hive` came back
+     non-null, show the 7 detected letters (center letter visually
+     highlighted) with a note that new candidates below are limited to them —
+     lets the user sanity-check OCR correctness at a glance instead of trusting
+     the filtering blindly. If `hive` is null (no letter row detected), show a
+     warning instead: candidates aren't letter-checked in that case (§7), so
+     this surfaces exactly the failure mode that otherwise fails silently.
    - **New candidates:** checkbox list, all checked by default (uncheck = OCR
      junk, not imported). Each checked word has a two-value toggle, default
      **Learn**; switching to **Already know** imports it directly as
@@ -221,35 +228,62 @@ confirm pattern for destructive actions.
 
 ## 7. OCR pipeline (`ocr.ts` + `parser.ts`)
 
-**Input assumption (per user):** screenshots of the NYT Games app answers page —
-dark serif words in columns on a white/cream background. Cleanest-case OCR; no
-binarization needed.
+**Input assumption (per user):** screenshots of the NYT app's word-list/reveal
+screen — dark serif answer words in two columns, with the 7 hive letters (center
+letter first, distinct gold color) shown as a heading above the list, and
+whatever nav chrome/rank-dialog text happened to be on screen above that.
 
 - **`ocr.ts`:** `createWorker('eng')` on demand (lazy — never at app startup),
   reused across uploads within a session, terminated on tab switch away from Add.
-  Preprocessing: if the image's smaller dimension is under ~1000px, upscale 2× via
-  canvas before recognition (tesseract accuracy drops on small text). Progress
-  callback surfaces tesseract's `status`/`progress` to the UI. Errors reject with
-  a typed `OcrError` so the screen can show a human message.
-- **`parser.ts`:** `parseCandidates(rawText, existingWords: Set<string>)` returns
-  `{ candidates: string[], alreadyKnown: string[], filteredUi: string[] }`
-  (the Add screen joins `alreadyKnown` against the db for status badges):
-  1. Uppercase the text; extract `/[A-Z]{4,}/g` matches; dedupe.
-  2. Drop blocklist hits (exported constant `UI_BLOCKLIST`): NYT chrome words —
-     `PANGRAM, ANSWERS, YESTERDAY, TODAY, TODAYS, YESTERDAYS, WORDS, POINTS,
-     GENIUS, QUEEN, SPELLING, GAMES, EDITED, FOUND, RANKINGS`, month names
-     (`JANUARY…DECEMBER`), and day names (`SUNDAY…SATURDAY`). The list lives in
-     one place and is trivially extendable when new junk shows up.
-  3. Split out words already in the database (any status) into `alreadyKnown`
-     for the review screen's second section (§6.2).
-  4. Sort each list alphabetically.
+  Recognizes at the screenshot's native resolution — an earlier version upscaled
+  anything under 1000px on the assumption that small text hurts tesseract's
+  accuracy, but real screenshots (~768px wide is a typical *common* phone
+  screenshot width, not an edge case) showed upscaling actively destroys the hive
+  row's low-contrast gold glyph under every interpolation kernel tried, with no
+  measurable benefit elsewhere; removed once verified against real screenshots.
+  Runs OCR **twice** per upload: pass 1 over the untouched image (used for hive
+  detection and the primary word list), pass 2 over a grayscale +
+  contrast-stretched + hard-thresholded copy (`boostContrast()`) that recovers
+  faint/low-contrast text — e.g. a word rendered mid-fade-in right as the user
+  found it — that pass 1 misses. The same threshold that recovers faint text
+  also wipes out the hive row's gold letter, which is why pass 2 is always
+  additive, never a replacement for pass 1. Progress callback surfaces both
+  passes across a 0–50% / 50–100% split. Errors reject with a typed `OcrError`.
+- **`parser.ts`:** `parseCandidates(rawText, existingWords: Set<string>, boostedText?: string)`
+  returns `{ candidates, alreadyKnown, filteredUi, filteredInvalidLetters, hive }`
+  (the Add screen joins `alreadyKnown` against the db for status badges, sums
+  `filteredUi.length + filteredInvalidLetters.length` for the review screen's
+  "N filtered out" count, and renders `hive` as the puzzle-letters banner,
+  §6.2). `hive` is `{ center: string, letters: string[] }` (center letter
+  first) when a hive row was found, else `null`.
+  1. Look for the 7 hive letters as a standalone line of exactly 7 unique
+     letters in `rawText` (OCR renders them as one unspaced run, e.g.
+     `VAGILNT` — not space-separated). If found, everything before that line
+     (nav chrome, rank-dialog text — vocabulary that can't be blocklisted by
+     word) is dropped, and the first letter is the required center letter.
+     If found, `boostedText` (pass 2's text) is appended for extraction too —
+     safe only because every word from either pass, chrome garbling included,
+     still has to pass hive validation (step 3) before becoming a real
+     candidate. If no hive row is found, `boostedText` is ignored entirely, since
+     without a hive to validate against there's no safety net for its noise.
+  2. Uppercase the (possibly hive-trimmed and boosted-text-extended) text;
+     extract `/[A-Z]{4,}/g` matches; dedupe.
+  3. Drop blocklist hits (exported constant `UI_BLOCKLIST`) into `filteredUi`:
+     NYT chrome words — `PANGRAM, ANSWERS, YESTERDAY, TODAY, TODAYS, YESTERDAYS,
+     WORDS, POINTS, GENIUS, QUEEN, SPELLING, GAMES, EDITED, FOUND, RANKINGS`,
+     month names (`JANUARY…DECEMBER`), and day names (`SUNDAY…SATURDAY`).
+     Then, if a hive was found, drop any word using a letter outside the hive
+     or missing the center letter into `filteredInvalidLetters`.
+  4. Split remaining words already in the database (any status) into
+     `alreadyKnown` for the review screen's second section (§6.2).
+  5. Sort each list alphabetically.
 - The review checklist (§6.2) is the final filter for anything heuristics miss —
-  the design deliberately prefers a light blocklist + human review over clever
-  heuristics that might eat real words. Blocklist entries are NYT chrome words
-  that only rarely appear as puzzle answers, but collisions are possible (e.g.
-  `QUEEN` or a month name could be a real answer); if that ever bites, P2 can
-  surface filtered words as unchecked-by-default candidates instead of hiding
-  them.
+  the design deliberately prefers blocklist + hive validation + human review
+  over cleverness that might eat real words. Blocklist entries are NYT chrome
+  words that only rarely appear as puzzle answers, but collisions are possible
+  (e.g. `QUEEN` or a month name could be a real answer); if that ever bites, P2
+  can surface filtered words as unchecked-by-default candidates instead of
+  hiding them.
 
 ## 8. Definition fetching (`dictionary.ts`)
 

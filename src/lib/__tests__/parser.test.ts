@@ -77,4 +77,14 @@ describe('parseCandidates', () => {
     expect(r.candidates).toEqual(['GALLIVANT']);
     expect(r.filteredInvalidLetters).toEqual(['PANDA']);
   });
+
+  it('reports the detected hive letters with the center letter first', () => {
+    const r = parseCandidates('VAGILNT\nGALLIVANT', new Set());
+    expect(r.hive).toEqual({ center: 'V', letters: ['V', 'A', 'G', 'I', 'L', 'N', 'T'] });
+  });
+
+  it('reports hive as null when no letter row is found', () => {
+    const r = parseCandidates(fixture, new Set());
+    expect(r.hive).toBeNull();
+  });
 });

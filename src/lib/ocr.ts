@@ -26,24 +26,17 @@ function getWorker(): Promise<Worker> {
   return workerPromise;
 }
 
-/** Upscale small screenshots 2x — tesseract accuracy drops on small text. */
-async function toRecognizable(file: File): Promise<File | HTMLCanvasElement> {
+/**
+ * Screenshots are recognized at native resolution. An earlier version
+ * upscaled anything under 1000px on the assumption that small text hurts
+ * tesseract's accuracy, but on real screenshots (~768px is a typical phone
+ * screenshot width — the common case, not an edge case) upscaling actively
+ * destroyed the hive letter row's low-contrast gold glyph regardless of
+ * interpolation kernel, while providing no measurable benefit to the rest
+ * of the text. Verified against real screenshots before removing.
+ */
+async function toCanvas(file: File): Promise<HTMLCanvasElement> {
   const bitmap = await createImageBitmap(file);
-  if (Math.min(bitmap.width, bitmap.height) >= 1000) {
-    bitmap.close();
-    return file;
-  }
-  const canvas = document.createElement('canvas');
-  canvas.width = bitmap.width * 2;
-  canvas.height = bitmap.height * 2;
-  canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  bitmap.close();
-  return canvas;
-}
-
-async function toCanvas(input: File | HTMLCanvasElement): Promise<HTMLCanvasElement> {
-  if (input instanceof HTMLCanvasElement) return input;
-  const bitmap = await createImageBitmap(input);
   const canvas = document.createElement('canvas');
   canvas.width = bitmap.width;
   canvas.height = bitmap.height;
@@ -109,12 +102,10 @@ export async function recognizeImage(
     throw new OcrError(`OCR engine failed to load: ${String(err)}`);
   }
   try {
-    const input = await toRecognizable(file);
-
     currentOnProgress = (p) => onProgress({ label: 'Reading words…', progress: p.progress * 0.5 });
-    const { data: pass1 } = await worker.recognize(input);
+    const { data: pass1 } = await worker.recognize(file);
 
-    const boosted = boostContrast(await toCanvas(input));
+    const boosted = boostContrast(await toCanvas(file));
     currentOnProgress = (p) => onProgress({ label: 'Reading faint words…', progress: 0.5 + p.progress * 0.5 });
     const { data: pass2 } = await worker.recognize(boosted);
 

@@ -5,6 +5,7 @@ import App from '../../App';
 import { DB_KEY } from '../../lib/storage';
 import { knownWordEntry } from '../../lib/leitner';
 import { SCHEMA_VERSION } from '../../lib/types';
+import { recognizeImage } from '../../lib/ocr';
 
 vi.mock('../../lib/ocr', () => ({
   recognizeImage: vi.fn(async () => ({ text: 'AGARIC NAIAD PANGRAM TIARA', boostedText: '' })),
@@ -56,4 +57,22 @@ it('"already know" imports straight to mastered', async () => {
   await screen.findByRole('status');
   const stored = JSON.parse(localStorage.getItem(DB_KEY)!);
   expect(stored.words.AGARIC).toMatchObject({ status: 'mastered', definition: 'def of AGARIC' });
+});
+
+it('shows the detected puzzle letters when a hive row is found', async () => {
+  vi.mocked(recognizeImage).mockResolvedValueOnce({ text: 'VAGILNT\nGALLIVANT', boostedText: '' });
+  render(<App />);
+  await userEvent.click(screen.getByRole('button', { name: /^add$/i }));
+  await userEvent.upload(
+    screen.getByLabelText(/upload solution screenshot/i),
+    new File(['x'], 'shot.png', { type: 'image/png' }),
+  );
+  await screen.findByText('GALLIVANT');
+  expect(screen.getByText('Puzzle letters detected')).toBeInTheDocument();
+  expect(screen.getByText((_, el) => el?.tagName === 'P' && el.textContent === 'V A G I L N T')).toBeInTheDocument();
+});
+
+it('warns when no hive row is detected, since candidates are unfiltered by letter', async () => {
+  await uploadShot(); // default mock has no hive row
+  expect(screen.getByText(/Couldn't detect the puzzle's 7 letters/)).toBeInTheDocument();
 });

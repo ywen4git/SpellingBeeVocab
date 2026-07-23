@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useVocab } from '../context/VocabProvider';
 import { useToast } from '../components/Toast';
-import { parseCandidates } from '../lib/parser';
+import { parseCandidates, type ParseResult } from '../lib/parser';
 import { recognizeImage, terminateOcr, type OcrProgress } from '../lib/ocr';
 import { fetchDefinitions, type DefinitionResult } from '../lib/dictionary';
 import type { VocabWord } from '../lib/types';
@@ -14,6 +14,7 @@ type ReviewPhase = {
   candidates: CandidateRow[];
   known: KnownRow[];
   filteredCount: number;
+  hive: ParseResult['hive'];
 };
 
 type Phase =
@@ -46,6 +47,7 @@ export default function AddScreen() {
         candidates: parsed.candidates.map((word) => ({ word, checked: true, know: false })),
         known: parsed.alreadyKnown.map((word) => ({ word, reset: false, current: db.words[word] })),
         filteredCount: parsed.filteredUi.length + parsed.filteredInvalidLetters.length,
+        hive: parsed.hive,
       });
     } catch {
       toast.show('Could not read that image — try again with a clearer screenshot.');
@@ -155,6 +157,27 @@ export default function AddScreen() {
 
   return (
     <div className="flex flex-col gap-4">
+      {phase.hive ? (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-center">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-amber-600">Puzzle letters detected</p>
+          <p className="mt-1 text-xl font-black tracking-widest text-slate-700">
+            {phase.hive.letters.map((l, i) => (
+              <span key={l} className={l === phase.hive!.center ? 'text-amber-500' : undefined}>
+                {l}
+                {i < phase.hive!.letters.length - 1 ? ' ' : ''}
+              </span>
+            ))}
+          </p>
+          <p className="mt-1 text-xs text-slate-400">
+            New candidates below use only these letters, always including {phase.hive.center}.
+          </p>
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-center text-xs text-red-600">
+          Couldn't detect the puzzle's 7 letters — new candidates aren't letter-checked, so review them carefully.
+        </div>
+      )}
+
       <p className="text-sm text-slate-500">
         {phase.candidates.length} new · {phase.known.length} already in collection · {phase.filteredCount} filtered out
       </p>
