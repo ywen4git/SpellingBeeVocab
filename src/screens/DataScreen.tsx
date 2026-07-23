@@ -136,6 +136,10 @@ export default function DataScreen() {
           Reset everything
         </button>
       </section>
+
+      <p className="text-center text-[10px] text-slate-300">
+        Build {__COMMIT_SHA__} · {__BUILD_TIME__.slice(0, 10)}
+      </p>
     </div>
   );
 }

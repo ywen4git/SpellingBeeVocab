@@ -43,6 +43,12 @@ it('previews and applies a backup merge', async () => {
   expect(stored.words.AGARIC).toBeDefined();
 });
 
+it('shows a build info footer with the commit and build date', async () => {
+  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  await openData();
+  expect(screen.getByText(new RegExp(`Build ${__COMMIT_SHA__} · ${__BUILD_TIME__.slice(0, 10)}`))).toBeInTheDocument();
+});
+
 it('reset requires typing DELETE', async () => {
   seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
   await openData();

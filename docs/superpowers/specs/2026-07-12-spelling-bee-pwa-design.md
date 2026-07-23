@@ -211,6 +211,13 @@ confirm pattern for destructive actions.
   word resumes with its saved box, due date, and stats.
 - **Reset:** danger-zone button with inline type-to-confirm ("type DELETE"),
   clears the db key.
+- **Build info footer:** subtle single line at the bottom of the screen,
+  `Build {commitSha} · {buildDate}` in small muted text — lets you confirm
+  which deploy is actually running on a device (useful given `autoUpdate`
+  applies silently, §9). Values are baked in at build time via `vite.config.ts`
+  (`git rev-parse --short HEAD` and the build timestamp, exposed as the
+  `__COMMIT_SHA__` / `__BUILD_TIME__` globals declared in `src/vite-env.d.ts`),
+  not read at runtime — no network call, no backend.
 
 ## 7. OCR pipeline (`ocr.ts` + `parser.ts`)
 
@@ -265,7 +272,9 @@ binarization needed.
 ## 9. PWA
 
 Via `vite-plugin-pwa`, `registerType: 'autoUpdate'` (new deploys activate on next
-launch; no update-prompt UI in v1).
+launch; no update-prompt UI in v1). Since this is silent, the Data screen's
+build info footer (§6.4) is the way to confirm a given install actually picked
+up a deploy.
 
 - **Manifest:** `name: "Bee Vocab Builder"`, `short_name: "BeeVocab"`,
   `display: "standalone"`, `orientation: "portrait"`,
