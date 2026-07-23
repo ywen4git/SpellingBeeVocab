@@ -35,23 +35,24 @@ describe('parseCandidates', () => {
     expect(UI_BLOCKLIST.has('PANGRAM')).toBe(true);
   });
 
-  it('drops chrome above the hive letter row and keeps valid answers', () => {
+  it('drops chrome above the hive letter row (rendered as one unspaced token by OCR) and keeps valid answers', () => {
     const r = parseCandidates(wordListFixture, new Set());
-    expect(r.candidates).not.toContain('STATS');
+    expect(r.candidates).not.toContain('GREAT');
     expect(r.candidates).not.toContain('GREATS');
-    expect(r.candidates).toContain('GALLIVANT');
-    expect(r.candidates).toContain('NAVIGATING');
+    expect(r.candidates).not.toContain('KNEW');
+    expect(r.candidates).toContain('INFALLIBLY');
+    expect(r.candidates).toContain('NAIF');
     expect(r.filteredInvalidLetters).toEqual([]);
   });
 
   it('rejects words containing a letter outside the detected hive', () => {
-    const r = parseCandidates('V A G I L N T\nGALLIVANT PANDA', new Set());
+    const r = parseCandidates('VAGILNT\nGALLIVANT PANDA', new Set());
     expect(r.candidates).toEqual(['GALLIVANT']);
     expect(r.filteredInvalidLetters).toEqual(['PANDA']);
   });
 
   it('rejects hive-letter words missing the center letter', () => {
-    const r = parseCandidates('V A G I L N T\nGALLIVANT GIANT', new Set());
+    const r = parseCandidates('VAGILNT\nGALLIVANT GIANT', new Set());
     expect(r.candidates).toEqual(['GALLIVANT']);
     expect(r.filteredInvalidLetters).toEqual(['GIANT']);
   });

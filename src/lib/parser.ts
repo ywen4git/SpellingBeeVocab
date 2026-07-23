@@ -28,22 +28,20 @@ interface HiveLetters {
 
 /**
  * The NYT app's word-list screen shows the 7 hive letters (center letter
- * first) as a run of single-character tokens, e.g. "V A G I L N T". Content
- * above that row is screen chrome (nav bar, dialog title) with no fixed
- * vocabulary, so it can't be blocklisted by word — instead we locate the
- * letter row and drop everything before it.
+ * first) as a single run of 7 letters on its own line, e.g. "VAGILNT" —
+ * OCR renders them with no spaces even though the app displays the center
+ * letter in a different color. Content above that row is screen chrome
+ * (nav bar, rank dialog) with no fixed vocabulary, so it can't be
+ * blocklisted by word — instead we locate the letter row and drop
+ * everything before it.
  */
 function findHiveLetters(text: string): { hive: HiveLetters; rest: string } | null {
-  const tokens = text.split(/\s+/).filter(Boolean);
-  for (let i = 0; i + 7 <= tokens.length; i++) {
-    const slice = tokens.slice(i, i + 7);
-    if (!slice.every((t) => /^[A-Za-z]$/.test(t))) continue;
-    const letters = slice.map((t) => t.toUpperCase());
-    const unique = new Set(letters);
-    if (unique.size !== 7) continue;
-    return { hive: { center: letters[0], letters: unique }, rest: tokens.slice(i + 7).join(' ') };
-  }
-  return null;
+  const match = /^[ \t]*([A-Za-z]{7})[ \t]*$/m.exec(text);
+  if (!match) return null;
+  const letters = match[1].toUpperCase().split('');
+  const unique = new Set(letters);
+  if (unique.size !== 7) return null;
+  return { hive: { center: letters[0], letters: unique }, rest: text.slice(match.index + match[0].length) };
 }
 
 /** A valid Spelling Bee answer uses only hive letters and includes the center letter. */
