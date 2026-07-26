@@ -87,4 +87,56 @@ describe('parseCandidates', () => {
     const r = parseCandidates(fixture, new Set());
     expect(r.hive).toBeNull();
   });
+
+  it('skips a coincidental 7-letter chrome line (e.g. "Answers") with a repeated letter and finds the real hive row below it', () => {
+    const r = parseCandidates('Answers\nJuly 24, 2026\nVAGILNT\nGALLIVANT', new Set());
+    expect(r.hive).toEqual({ center: 'V', letters: ['V', 'A', 'G', 'I', 'L', 'N', 'T'] });
+    expect(r.candidates).toEqual(['GALLIVANT']);
+  });
+
+  it('rejects a coincidental 7-unique-letter chrome line whose "hive" fits none of the words that follow it', () => {
+    const r = parseCandidates('Playing\nEVOKING EKING ENOKI EVOKE GEEK', new Set());
+    expect(r.hive).toBeNull();
+    // "Playing" itself remains as unconsumed chrome text (same as any unblocklisted screen chrome)
+    // rather than being wrongly promoted to the hive, since none of the real words fit it.
+    expect(r.candidates).toEqual(['EKING', 'ENOKI', 'EVOKE', 'EVOKING', 'GEEK', 'PLAYING']);
+    expect(r.filteredInvalidLetters).toEqual([]);
+  });
+
+  it('does not hide already-known words behind a rejected chrome "hive" match', () => {
+    const known = new Set(['EKING', 'ENOKI', 'EVOKE', 'EVOKING', 'GEEK']);
+    const r = parseCandidates('Playing\nEVOKING EKING ENOKI EVOKE GEEK', known);
+    expect(r.hive).toBeNull();
+    expect(r.alreadyKnown).toEqual(['EKING', 'ENOKI', 'EVOKE', 'EVOKING', 'GEEK']);
+    expect(r.candidates).toEqual(['PLAYING']);
+  });
+
+  it('prefers the hive-row candidate closest to the answer list when an earlier line also happens to have 7 unique letters', () => {
+    const r = parseCandidates('Playing\nVAGILNT\nGALLIVANT VITAL VITA', new Set());
+    expect(r.hive).toEqual({ center: 'V', letters: ['V', 'A', 'G', 'I', 'L', 'N', 'T'] });
+    expect(r.candidates).toEqual(['GALLIVANT', 'VITA', 'VITAL']);
+  });
+
+  it('recovers the hive letters from hiveText when the raw pass misread the (gold) center letter', () => {
+    // Raw pass misread the center letter G as C ("CAGILNT"), which fits none of the real answers,
+    // but the ink-isolated pass (hiveText) read it correctly and validates against the same words.
+    const r = parseCandidates(
+      'CAGILNT\nGALLIVANT VITAL VITA',
+      new Set(),
+      undefined,
+      'VAGILNT',
+    );
+    expect(r.hive).toEqual({ center: 'V', letters: ['V', 'A', 'G', 'I', 'L', 'N', 'T'] });
+    expect(r.candidates).toEqual(['GALLIVANT', 'VITA', 'VITAL']);
+  });
+
+  it('ignores hiveText when the raw-pass hive row already validates', () => {
+    const r = parseCandidates('VAGILNT\nGALLIVANT VITAL VITA', new Set(), undefined, 'ZZZZZZZ');
+    expect(r.hive).toEqual({ center: 'V', letters: ['V', 'A', 'G', 'I', 'L', 'N', 'T'] });
+  });
+
+  it('falls back to null when neither the raw pass nor hiveText produce a hive row that fits the answers', () => {
+    const r = parseCandidates('Playing\nEVOKING EKING ENOKI EVOKE GEEK', new Set(), undefined, 'Working');
+    expect(r.hive).toBeNull();
+  });
 });

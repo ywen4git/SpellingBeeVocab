@@ -83,10 +83,48 @@ function boostContrast(source: HTMLCanvasElement): HTMLCanvasElement {
   return out;
 }
 
+/**
+ * Isolates ink regardless of color: a pixel counts as ink if it's dark
+ * (ordinary black text) OR distinctly gold-hued (the hive row's center
+ * letter), and everything else becomes white. boostContrast()'s pure
+ * luminance threshold treats that gold as bright — indistinguishable from
+ * the white background — and erases it; gold pixels have high R and G but
+ * low B, so a hue-based test (min(R,G) - B) catches them even though their
+ * luminance is background-level. This is run as its own pass rather than
+ * folded into boostContrast() because it's tuned specifically for
+ * recovering the hive row, not for faint body text.
+ */
+function isolateInk(source: HTMLCanvasElement): HTMLCanvasElement {
+  const ctx = source.getContext('2d')!;
+  const { width, height } = source;
+  const imageData = ctx.getImageData(0, 0, width, height);
+  const { data } = imageData;
+  const pixelCount = width * height;
+  for (let i = 0; i < pixelCount; i++) {
+    const r = data[i * 4];
+    const g = data[i * 4 + 1];
+    const b = data[i * 4 + 2];
+    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+    const goldness = Math.min(r, g) - b;
+    const isInk = lum < 200 || goldness > 60;
+    const v = isInk ? 0 : 255;
+    data[i * 4] = v;
+    data[i * 4 + 1] = v;
+    data[i * 4 + 2] = v;
+  }
+  const out = document.createElement('canvas');
+  out.width = width;
+  out.height = height;
+  out.getContext('2d')!.putImageData(imageData, 0, 0);
+  return out;
+}
+
 export interface OcrResult {
   text: string;
   /** Second pass over a contrast-boosted copy; see boostContrast(). */
   boostedText: string;
+  /** Third pass over a gold-aware ink mask; see isolateInk(). Used to recover the hive row's center letter. */
+  hiveText: string;
 }
 
 export async function recognizeImage(
@@ -102,14 +140,20 @@ export async function recognizeImage(
     throw new OcrError(`OCR engine failed to load: ${String(err)}`);
   }
   try {
-    currentOnProgress = (p) => onProgress({ label: 'Reading words…', progress: p.progress * 0.5 });
+    currentOnProgress = (p) => onProgress({ label: 'Reading words…', progress: p.progress / 3 });
     const { data: pass1 } = await worker.recognize(file);
 
-    const boosted = boostContrast(await toCanvas(file));
-    currentOnProgress = (p) => onProgress({ label: 'Reading faint words…', progress: 0.5 + p.progress * 0.5 });
+    const canvas = await toCanvas(file);
+
+    const boosted = boostContrast(canvas);
+    currentOnProgress = (p) => onProgress({ label: 'Reading faint words…', progress: 1 / 3 + p.progress / 3 });
     const { data: pass2 } = await worker.recognize(boosted);
 
-    return { text: pass1.text, boostedText: pass2.text };
+    const inked = isolateInk(canvas);
+    currentOnProgress = (p) => onProgress({ label: 'Reading puzzle letters…', progress: 2 / 3 + p.progress / 3 });
+    const { data: pass3 } = await worker.recognize(inked);
+
+    return { text: pass1.text, boostedText: pass2.text, hiveText: pass3.text };
   } catch (err) {
     throw new OcrError(`Recognition failed: ${String(err)}`);
   } finally {

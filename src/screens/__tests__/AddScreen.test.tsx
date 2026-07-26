@@ -8,7 +8,7 @@ import { SCHEMA_VERSION } from '../../lib/types';
 import { recognizeImage } from '../../lib/ocr';
 
 vi.mock('../../lib/ocr', () => ({
-  recognizeImage: vi.fn(async () => ({ text: 'AGARIC NAIAD PANGRAM TIARA', boostedText: '' })),
+  recognizeImage: vi.fn(async () => ({ text: 'AGARIC NAIAD PANGRAM TIARA', boostedText: '', hiveText: '' })),
   terminateOcr: vi.fn(async () => {}),
 }));
 
@@ -60,7 +60,7 @@ it('"already know" imports straight to mastered', async () => {
 });
 
 it('shows the detected puzzle letters when a hive row is found', async () => {
-  vi.mocked(recognizeImage).mockResolvedValueOnce({ text: 'VAGILNT\nGALLIVANT', boostedText: '' });
+  vi.mocked(recognizeImage).mockResolvedValueOnce({ text: 'VAGILNT\nGALLIVANT', boostedText: '', hiveText: '' });
   render(<App />);
   await userEvent.click(screen.getByRole('button', { name: /^add$/i }));
   await userEvent.upload(
@@ -75,4 +75,21 @@ it('shows the detected puzzle letters when a hive row is found', async () => {
 it('warns when no hive row is detected, since candidates are unfiltered by letter', async () => {
   await uploadShot(); // default mock has no hive row
   expect(screen.getByText(/Couldn't detect the puzzle's 7 letters/)).toBeInTheDocument();
+});
+
+it('combines multiple screenshots (e.g. a long answer list split across pages) into one parse', async () => {
+  vi.mocked(recognizeImage)
+    .mockResolvedValueOnce({ text: 'VAGILNT\nGALLIVANT', boostedText: '', hiveText: '' })
+    .mockResolvedValueOnce({ text: 'VITAL VITA', boostedText: '', hiveText: '' });
+  render(<App />);
+  await userEvent.click(screen.getByRole('button', { name: /^add$/i }));
+  const input = screen.getByLabelText(/upload solution screenshot/i);
+  await userEvent.upload(input, [
+    new File(['x'], 'shot1.png', { type: 'image/png' }),
+    new File(['x'], 'shot2.png', { type: 'image/png' }),
+  ]);
+  await screen.findByText('GALLIVANT');
+  expect(screen.getByText('VITAL')).toBeInTheDocument();
+  expect(screen.getByText('VITA')).toBeInTheDocument();
+  expect(screen.getByText('Puzzle letters detected')).toBeInTheDocument();
 });

@@ -34,14 +34,34 @@ export default function AddScreen() {
     abortRef.current?.abort();
   }, []);
 
-  const handleFile = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const handleFiles = async (e: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
     e.target.value = '';
-    if (!file) return;
+    if (files.length === 0) return;
     setPhase({ name: 'ocr', progress: { label: 'Loading OCR engine…', progress: 0 } });
     try {
-      const { text, boostedText } = await recognizeImage(file, (progress) => setPhase({ name: 'ocr', progress }));
-      const parsed = parseCandidates(text, new Set(Object.keys(db.words)), boostedText);
+      // Multiple screenshots (e.g. a long answer list split across several pages) are treated as one
+      // combined page: only the first typically has the puzzle-letters row, later ones just contribute
+      // more answer words, and parseCandidates finds the hive by cross-checking against all of them at
+      // once — the more real words it has to validate against, the more reliable that detection is.
+      const texts: string[] = [];
+      const boostedTexts: string[] = [];
+      const hiveTexts: string[] = [];
+      for (const [i, file] of files.entries()) {
+        const result = await recognizeImage(file, (progress) => {
+          const label = files.length > 1 ? `${progress.label} (screenshot ${i + 1} of ${files.length})` : progress.label;
+          setPhase({ name: 'ocr', progress: { label, progress: (i + progress.progress) / files.length } });
+        });
+        texts.push(result.text);
+        boostedTexts.push(result.boostedText);
+        hiveTexts.push(result.hiveText);
+      }
+      const parsed = parseCandidates(
+        texts.join('\n'),
+        new Set(Object.keys(db.words)),
+        boostedTexts.join('\n'),
+        hiveTexts.join('\n'),
+      );
       setPhase({
         name: 'review',
         candidates: parsed.candidates.map((word) => ({ word, checked: true, know: false })),
@@ -95,17 +115,19 @@ export default function AddScreen() {
     return (
       <div className="rounded-2xl border border-slate-200 bg-white p-4">
         <label htmlFor="shot" className="mb-2 block text-sm font-semibold text-slate-700">
-          Upload solution screenshot
+          Upload solution screenshot(s)
         </label>
         <input
           id="shot"
           type="file"
           accept="image/png,image/jpeg"
-          onChange={handleFile}
+          multiple
+          onChange={handleFiles}
           className="min-h-[44px] file:min-h-[44px] w-full text-sm text-slate-500 file:mr-4 file:rounded-xl file:border-0 file:bg-amber-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-amber-700"
         />
         <p className="mt-2 text-xs text-slate-400">
-          Works best with the NYT app's "Yesterday's Answers" page.
+          Works best with the NYT app's "Yesterday's Answers" page. If the list didn't fit on one screen,
+          select all the screenshots together and they'll be combined.
         </p>
       </div>
     );
