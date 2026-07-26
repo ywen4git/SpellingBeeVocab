@@ -14,6 +14,13 @@ const DAYS = [
 /** NYT app UI words that must not become flashcards. Extend here when new junk shows up. */
 export const UI_BLOCKLIST: ReadonlySet<string> = new Set([...NYT_CHROME, ...MONTHS, ...DAYS]);
 
+export interface Correction {
+  /** The raw OCR reading, unchanged (e.g. "LOTA"). */
+  original: string;
+  /** What we believe it actually says, now included in candidates/alreadyKnown instead (e.g. "IOTA"). */
+  corrected: string;
+}
+
 export interface ParseResult {
   candidates: string[];
   alreadyKnown: string[];
@@ -21,6 +28,12 @@ export interface ParseResult {
   filteredInvalidLetters: string[];
   /** The 7 hive letters detected in the screenshot (center letter first), or null if none was found. */
   hive: { center: string; letters: string[] } | null;
+  /**
+   * Words only recognized after correcting a likely OCR misread (see normalizeOcrToken()).
+   * The corrected spelling is what actually appears in `candidates`/`alreadyKnown` — this list
+   * exists so the UI can show the raw OCR reading too, for the user to sanity-check.
+   */
+  corrections: Correction[];
 }
 
 interface HiveLetters {
@@ -104,6 +117,32 @@ function findHiveLetters(
   return null;
 }
 
+/** A digit OCR mistook for a letter — never legitimate in an answer word, so safe to fix anywhere in a token. */
+const DIGIT_TO_LETTER: Readonly<Record<string, string>> = { '0': 'O', '1': 'I', '5': 'S' };
+
+/**
+ * Every answer word on this screen is title-cased — a capital first letter,
+ * lowercase after that (see the raw OCR dumps: "Iota", "Ionization"). That
+ * convention is what makes a leading lowercase "l" fixable with confidence:
+ * it can only be a misread capital "I" (real lowercase "l"s only ever occur
+ * after the first character, e.g. "Ballot"), never a legitimate leading
+ * letter of its own. A lowercase "l" anywhere else in the token is left
+ * alone, since it's ordinary spelling, not a shape collision.
+ *
+ * Digits are handled separately and without a position restriction: unlike
+ * letters, no digit is ever legitimately part of an answer word, so any
+ * digit found anywhere in a word-shaped token is unambiguously an OCR
+ * mistake and always worth correcting.
+ */
+function normalizeOcrToken(raw: string): string {
+  return [...raw]
+    .map((ch, i) => {
+      if (i === 0 && ch === 'l') return 'I';
+      return DIGIT_TO_LETTER[ch] ?? ch;
+    })
+    .join('');
+}
+
 /**
  * `boostedText` is a second OCR pass over a contrast-boosted copy of the
  * same image, which recovers faint/low-contrast answer words (e.g. one
@@ -114,6 +153,15 @@ function findHiveLetters(
  * noise safe to merge in; without a confirmed hive there's no such net,
  * so an unmatched `boostedText` is ignored entirely rather than risking
  * new false-positive candidates.
+ *
+ * That same "a confirmed hive is a trustworthy ground truth" logic is what
+ * justifies correcting individual words, not just picking the hive line:
+ * once >=50% of the words below it fit, we trust that everything else down
+ * there should too, so a token that fits ONLY after normalizeOcrToken()'s
+ * shape-based correction is treated as that word, not discarded as noise —
+ * with the raw OCR spelling kept in `corrections` for the user to check.
+ * Without a confirmed hive there's no ground truth to justify a correction
+ * against, so none are attempted.
  */
 export function parseCandidates(
   rawText: string,
@@ -124,12 +172,32 @@ export function parseCandidates(
   const found = findHiveLetters(rawText, hiveText);
   let text = found ? found.rest : rawText;
   if (found && boostedText) text += `\n${boostedText}`;
-  const matches = text.toUpperCase().match(/[A-Z]{4,}/g) ?? [];
+  const rawMatches = text.match(/[A-Za-z][A-Za-z0-9]{3,}/g) ?? [];
+
   const candidates: string[] = [];
   const alreadyKnown: string[] = [];
   const filteredUi: string[] = [];
   const filteredInvalidLetters: string[] = [];
-  for (const word of new Set(matches)) {
+  const corrections: Correction[] = [];
+  const seen = new Set<string>();
+  const correctionsSeen = new Set<string>();
+
+  for (const raw of rawMatches) {
+    const original = raw.toUpperCase();
+    let word = original;
+    if (found) {
+      const normalized = normalizeOcrToken(raw).toUpperCase();
+      if (normalized !== original && isValidForHive(normalized, found.hive) && !isValidForHive(original, found.hive)) {
+        word = normalized;
+        if (!correctionsSeen.has(original)) {
+          correctionsSeen.add(original);
+          corrections.push({ original, corrected: word });
+        }
+      }
+    }
+    if (seen.has(word)) continue;
+    seen.add(word);
+
     if (UI_BLOCKLIST.has(word)) filteredUi.push(word);
     else if (found && !isValidForHive(word, found.hive)) filteredInvalidLetters.push(word);
     else if (existingWords.has(word)) alreadyKnown.push(word);
@@ -139,6 +207,7 @@ export function parseCandidates(
   alreadyKnown.sort();
   filteredUi.sort();
   filteredInvalidLetters.sort();
+  corrections.sort((a, b) => a.original.localeCompare(b.original));
   const hive = found ? { center: found.hive.center, letters: [...found.hive.letters] } : null;
-  return { candidates, alreadyKnown, filteredUi, filteredInvalidLetters, hive };
+  return { candidates, alreadyKnown, filteredUi, filteredInvalidLetters, hive, corrections };
 }

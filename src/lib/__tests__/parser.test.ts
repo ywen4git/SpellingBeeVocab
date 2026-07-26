@@ -139,4 +139,58 @@ describe('parseCandidates', () => {
     const r = parseCandidates('Playing\nEVOKING EKING ENOKI EVOKE GEEK', new Set(), undefined, 'Working');
     expect(r.hive).toBeNull();
   });
+
+  it('validates a hive candidate using words carried over from a second, concatenated screenshot', () => {
+    // Screenshot 1 alone: too few of the words after the hive line actually fit it (page cut off
+    // mid-list), so on its own this would fail validation and fall back to null.
+    const page1 = 'VAGILNT\nPANDA TIARA GIANT';
+    const page1Result = parseCandidates(page1, new Set());
+    expect(page1Result.hive).toBeNull();
+
+    // AddScreen concatenates OCR text from every uploaded screenshot before a single parseCandidates
+    // call — screenshot 2 has no hive row of its own (continuation pages never repeat it), but its
+    // extra real answers are enough to tip the same candidate line over the 50% validation threshold.
+    const page2 = 'GALLIVANT VITAL VITA LIVING';
+    const combinedResult = parseCandidates(`${page1}\n${page2}`, new Set());
+    expect(combinedResult.hive).toEqual({ center: 'V', letters: ['V', 'A', 'G', 'I', 'L', 'N', 'T'] });
+    expect(combinedResult.candidates).toEqual(['GALLIVANT', 'LIVING', 'VITA', 'VITAL']);
+    expect(combinedResult.filteredInvalidLetters).toEqual(['GIANT', 'PANDA', 'TIARA']);
+  });
+
+  it('corrects a leading lowercase "l" to "I" when that is the only way the word fits a confirmed hive', () => {
+    // Real case: "Iota" OCR'd as "lota" (capital I and lowercase l look identical in this font).
+    const r = parseCandidates('IAMNOTZ\nManzanita lota Motion', new Set());
+    expect(r.hive).toEqual({ center: 'I', letters: ['I', 'A', 'M', 'N', 'O', 'T', 'Z'] });
+    expect(r.candidates).toEqual(['IOTA', 'MANZANITA', 'MOTION']);
+    expect(r.corrections).toEqual([{ original: 'LOTA', corrected: 'IOTA' }]);
+  });
+
+  it('corrects a digit standing in for its letter look-alike anywhere in the token', () => {
+    // "0" for "O" here; DIGIT_TO_LETTER also covers "1" for "I" and "5" for "S".
+    const r = parseCandidates('IAMNOTZ\nManzanita N0tion Motion', new Set());
+    expect(r.hive).toEqual({ center: 'I', letters: ['I', 'A', 'M', 'N', 'O', 'T', 'Z'] });
+    expect(r.candidates).toEqual(['MANZANITA', 'MOTION', 'NOTION']);
+    expect(r.corrections).toEqual([{ original: 'N0TION', corrected: 'NOTION' }]);
+  });
+
+  it('does not attempt corrections when no hive was confirmed, since there is no ground truth to justify one', () => {
+    const r = parseCandidates('lota N0tion', new Set());
+    expect(r.hive).toBeNull();
+    expect(r.candidates).toEqual(['LOTA', 'N0TION']);
+    expect(r.corrections).toEqual([]);
+  });
+
+  it('leaves a genuine lowercase "l" alone when it is not in the leading position', () => {
+    const r = parseCandidates('IAMNOTZ\nManzanita Ballot Motion', new Set());
+    // "Ballot" contains a B and a real (non-leading) "l" — neither hive-valid nor "correctable" —
+    // so it's rejected outright rather than mangled into some other word.
+    expect(r.filteredInvalidLetters).toContain('BALLOT');
+    expect(r.corrections).toEqual([]);
+  });
+
+  it('does not report a correction when the raw OCR reading was already valid', () => {
+    const r = parseCandidates('IAMNOTZ\nManzanita Iota Motion', new Set());
+    expect(r.candidates).toEqual(['IOTA', 'MANZANITA', 'MOTION']);
+    expect(r.corrections).toEqual([]);
+  });
 });

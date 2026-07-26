@@ -8,14 +8,29 @@ import type { VocabWord } from '../lib/types';
 
 interface CandidateRow { word: string; checked: boolean; know: boolean }
 interface KnownRow { word: string; reset: boolean; current: VocabWord }
+interface CorrectionRow { original: string; corrected: string; checked: boolean; know: boolean }
 
 type ReviewPhase = {
   name: 'review';
   candidates: CandidateRow[];
   known: KnownRow[];
+  corrections: CorrectionRow[];
   filteredCount: number;
   hive: ParseResult['hive'];
 };
+
+/** A word using every hive letter at least once — the NYT page itself bolds these at the top of the list. */
+function isPangram(word: string, hive: ParseResult['hive']): boolean {
+  return hive !== null && hive.letters.every((l) => word.includes(l));
+}
+
+/** Splits an already-sorted list into pangrams (which the NYT page itself bolds at the top) and the rest. */
+function splitPangrams<T extends { word: string }>(rows: T[], hive: ParseResult['hive']): { pangrams: T[]; rest: T[] } {
+  return {
+    pangrams: rows.filter((r) => isPangram(r.word, hive)),
+    rest: rows.filter((r) => !isPangram(r.word, hive)),
+  };
+}
 
 type Phase =
   | { name: 'upload' }
@@ -66,6 +81,7 @@ export default function AddScreen() {
         name: 'review',
         candidates: parsed.candidates.map((word) => ({ word, checked: true, know: false })),
         known: parsed.alreadyKnown.map((word) => ({ word, reset: false, current: db.words[word] })),
+        corrections: parsed.corrections.map((c) => ({ ...c, checked: false, know: false })),
         filteredCount: parsed.filteredUi.length + parsed.filteredInvalidLetters.length,
         hive: parsed.hive,
       });
@@ -76,8 +92,14 @@ export default function AddScreen() {
   };
 
   const handleCommit = async (review: ReviewPhase) => {
-    const learnWords = review.candidates.filter((c) => c.checked && !c.know).map((c) => c.word);
-    const knowWords = review.candidates.filter((c) => c.checked && c.know).map((c) => c.word);
+    const learnWords = [
+      ...review.candidates.filter((c) => c.checked && !c.know).map((c) => c.word),
+      ...review.corrections.filter((c) => c.checked && !c.know).map((c) => c.original),
+    ];
+    const knowWords = [
+      ...review.candidates.filter((c) => c.checked && c.know).map((c) => c.word),
+      ...review.corrections.filter((c) => c.checked && c.know).map((c) => c.original),
+    ];
     const resets = review.known.filter((k) => k.reset).map((k) => k.word);
     const toFetch = [...learnWords, ...knowWords];
 
@@ -165,7 +187,8 @@ export default function AddScreen() {
 
   const selectedCount =
     phase.candidates.filter((c) => c.checked).length +
-    phase.known.filter((k) => k.reset).length;
+    phase.known.filter((k) => k.reset).length +
+    phase.corrections.filter((c) => c.checked).length;
   const setCandidate = (word: string, patch: Partial<CandidateRow>) =>
     setPhase({
       ...phase,
@@ -176,6 +199,13 @@ export default function AddScreen() {
       ...phase,
       known: phase.known.map((k) => (k.word === word ? { ...k, reset } : k)),
     });
+  const setCorrection = (original: string, patch: Partial<CorrectionRow>) =>
+    setPhase({
+      ...phase,
+      corrections: phase.corrections.map((c) => (c.original === original ? { ...c, ...patch } : c)),
+    });
+  const candidateGroups = splitPangrams(phase.candidates, phase.hive);
+  const knownGroups = splitPangrams(phase.known, phase.hive);
 
   return (
     <div className="flex flex-col gap-4">
@@ -201,10 +231,11 @@ export default function AddScreen() {
       )}
 
       <p className="text-sm text-slate-500">
-        {phase.candidates.length} new · {phase.known.length} already in collection · {phase.filteredCount} filtered out
+        {phase.candidates.length} new · {phase.known.length} already in collection ·{' '}
+        {phase.corrections.length} uncertain · {phase.filteredCount} filtered out
       </p>
 
-      {phase.candidates.length === 0 && phase.known.length === 0 ? (
+      {phase.candidates.length === 0 && phase.known.length === 0 && phase.corrections.length === 0 ? (
         <div className="rounded-2xl border border-slate-200 bg-white p-6 text-center text-sm text-slate-600">
           Couldn't find words — try a tighter crop of the answers list.
           <button
@@ -220,7 +251,42 @@ export default function AddScreen() {
             <section className="rounded-2xl border border-slate-200 bg-white p-4">
               <h2 className="mb-2 text-sm font-bold text-slate-700">New candidates</h2>
               <ul>
-                {phase.candidates.map((c) => (
+                {candidateGroups.pangrams.length > 0 && (
+                  <li className="pb-1 text-[10px] font-bold uppercase tracking-wide text-amber-600">
+                    Uses all 7 letters
+                  </li>
+                )}
+                {candidateGroups.pangrams.map((c) => (
+                  <li key={c.word} className="flex min-h-[44px] items-center gap-3">
+                    <input
+                      type="checkbox"
+                      id={`cand-${c.word}`}
+                      checked={c.checked}
+                      onChange={(e) => setCandidate(c.word, { checked: e.target.checked })}
+                      className="h-5 w-5 accent-amber-500"
+                    />
+                    <label htmlFor={`cand-${c.word}`} className="flex min-h-[44px] flex-1 items-center font-semibold">
+                      {c.word}
+                    </label>
+                    {c.checked && (
+                      <button
+                        onClick={() => setCandidate(c.word, { know: !c.know })}
+                        aria-label={`${c.word}: ${c.know ? 'already know' : 'learn'}`}
+                        className={`min-h-[44px] rounded-full px-3 py-1 text-xs font-semibold ${
+                          c.know ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                        }`}
+                      >
+                        {c.know ? 'Know' : 'Learn'}
+                      </button>
+                    )}
+                  </li>
+                ))}
+                {candidateGroups.pangrams.length > 0 && candidateGroups.rest.length > 0 && (
+                  <li className="border-t border-slate-100 pb-1 pt-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                    Other words
+                  </li>
+                )}
+                {candidateGroups.rest.map((c) => (
                   <li key={c.word} className="flex min-h-[44px] items-center gap-3">
                     <input
                       type="checkbox"
@@ -254,7 +320,12 @@ export default function AddScreen() {
               <h2 className="mb-1 text-sm font-bold text-slate-700">Already in your collection</h2>
               <p className="mb-2 text-xs text-slate-400">Check a word to reset it to learning (Box 1).</p>
               <ul>
-                {phase.known.map((k) => (
+                {knownGroups.pangrams.length > 0 && (
+                  <li className="pb-1 text-[10px] font-bold uppercase tracking-wide text-amber-600">
+                    Uses all 7 letters
+                  </li>
+                )}
+                {knownGroups.pangrams.map((k) => (
                   <li key={k.word} className="flex min-h-[44px] items-center gap-3">
                     <input
                       type="checkbox"
@@ -269,6 +340,66 @@ export default function AddScreen() {
                         {k.current.status === 'mastered' ? 'mastered' : `Box ${k.current.box}`}
                       </span>
                     </label>
+                  </li>
+                ))}
+                {knownGroups.pangrams.length > 0 && knownGroups.rest.length > 0 && (
+                  <li className="border-t border-slate-100 pb-1 pt-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                    Other words
+                  </li>
+                )}
+                {knownGroups.rest.map((k) => (
+                  <li key={k.word} className="flex min-h-[44px] items-center gap-3">
+                    <input
+                      type="checkbox"
+                      id={`known-${k.word}`}
+                      checked={k.reset}
+                      onChange={(e) => setKnown(k.word, e.target.checked)}
+                      className="h-5 w-5 accent-amber-500"
+                    />
+                    <label htmlFor={`known-${k.word}`} className="flex min-h-[44px] flex-1 items-center gap-1">
+                      <span className="font-semibold">{k.word}</span>{' '}
+                      <span className="text-xs text-slate-400">
+                        {k.current.status === 'mastered' ? 'mastered' : `Box ${k.current.box}`}
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {phase.corrections.length > 0 && (
+            <section className="rounded-2xl border border-slate-200 bg-white p-4">
+              <h2 className="mb-1 text-sm font-bold text-slate-700">Uncertain OCR readings</h2>
+              <p className="mb-2 text-xs text-slate-400">
+                We think these are misreads of words already listed above and left them unchecked — check one
+                only if we guessed wrong and this raw reading should be added as its own word instead.
+              </p>
+              <ul>
+                {phase.corrections.map((c) => (
+                  <li key={c.original} className="flex min-h-[44px] items-center gap-3">
+                    <input
+                      type="checkbox"
+                      id={`corr-${c.original}`}
+                      checked={c.checked}
+                      onChange={(e) => setCorrection(c.original, { checked: e.target.checked })}
+                      className="h-5 w-5 accent-amber-500"
+                    />
+                    <label htmlFor={`corr-${c.original}`} className="flex min-h-[44px] flex-1 flex-col justify-center">
+                      <span className="font-semibold text-slate-500">{c.original}</span>
+                      <span className="text-xs text-slate-400">read as "{c.corrected}" above</span>
+                    </label>
+                    {c.checked && (
+                      <button
+                        onClick={() => setCorrection(c.original, { know: !c.know })}
+                        aria-label={`${c.original}: ${c.know ? 'already know' : 'learn'}`}
+                        className={`min-h-[44px] rounded-full px-3 py-1 text-xs font-semibold ${
+                          c.know ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                        }`}
+                      >
+                        {c.know ? 'Know' : 'Learn'}
+                      </button>
+                    )}
                   </li>
                 ))}
               </ul>

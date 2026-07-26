@@ -93,3 +93,58 @@ it('combines multiple screenshots (e.g. a long answer list split across pages) i
   expect(screen.getByText('VITA')).toBeInTheDocument();
   expect(screen.getByText('Puzzle letters detected')).toBeInTheDocument();
 });
+
+it('groups new candidates with pangrams (words using all 7 letters) first, under a divider', async () => {
+  vi.mocked(recognizeImage).mockResolvedValueOnce({
+    text: 'VAGILNT\nGALLIVANT VITAL', boostedText: '', hiveText: '',
+  });
+  render(<App />);
+  await userEvent.click(screen.getByRole('button', { name: /^add$/i }));
+  await userEvent.upload(
+    screen.getByLabelText(/upload solution screenshot/i),
+    new File(['x'], 'shot.png', { type: 'image/png' }),
+  );
+  await screen.findByText('GALLIVANT'); // uses all 7 hive letters — the pangram
+  expect(screen.getByText('Uses all 7 letters')).toBeInTheDocument();
+  expect(screen.getByText('Other words')).toBeInTheDocument();
+  expect(screen.getByText('VITAL')).toBeInTheDocument();
+});
+
+it('lists a low-confidence OCR correction separately, unchecked, noting what it was corrected to', async () => {
+  vi.mocked(recognizeImage).mockResolvedValueOnce({
+    text: 'IAMNOTZ\nAtomization Motion lota', boostedText: '', hiveText: '',
+  });
+  render(<App />);
+  await userEvent.click(screen.getByRole('button', { name: /^add$/i }));
+  await userEvent.upload(
+    screen.getByLabelText(/upload solution screenshot/i),
+    new File(['x'], 'shot.png', { type: 'image/png' }),
+  );
+  await screen.findByText('IOTA'); // the corrected spelling is the real, checked-by-default candidate
+  expect(screen.getByText('Uncertain OCR readings')).toBeInTheDocument();
+  expect(screen.getByText('LOTA')).toBeInTheDocument();
+  expect(screen.getByText('read as "IOTA" above')).toBeInTheDocument();
+  expect(screen.getByRole('checkbox', { name: /LOTA/ })).not.toBeChecked();
+});
+
+it('can add a correction\'s raw OCR spelling instead, if the guessed fix looks wrong', async () => {
+  vi.mocked(recognizeImage).mockResolvedValueOnce({
+    text: 'IAMNOTZ\nAtomization Motion lota', boostedText: '', hiveText: '',
+  });
+  render(<App />);
+  await userEvent.click(screen.getByRole('button', { name: /^add$/i }));
+  await userEvent.upload(
+    screen.getByLabelText(/upload solution screenshot/i),
+    new File(['x'], 'shot.png', { type: 'image/png' }),
+  );
+  await screen.findByText('IOTA');
+  await userEvent.click(screen.getByRole('checkbox', { name: /LOTA/ }));
+  await userEvent.click(screen.getByRole('checkbox', { name: 'ATOMIZATION' }));
+  await userEvent.click(screen.getByRole('checkbox', { name: 'MOTION' }));
+  await userEvent.click(screen.getByRole('checkbox', { name: 'IOTA' }));
+  await userEvent.click(screen.getByRole('button', { name: /add 1 word/i }));
+  await screen.findByRole('status');
+  const stored = JSON.parse(localStorage.getItem(DB_KEY)!);
+  expect(stored.words.LOTA).toMatchObject({ status: 'learning' });
+  expect(stored.words.IOTA).toBeUndefined();
+});
