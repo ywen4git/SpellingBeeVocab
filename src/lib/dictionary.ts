@@ -19,6 +19,16 @@ function abortError(): DOMException {
   return new DOMException('Aborted', 'AbortError');
 }
 
+/**
+ * A real `fetch()` abort throws a DOMException named "AbortError" — which extends Error in actual
+ * browsers, but NOT under jsdom (Node's test environment), so `err instanceof Error` alone is an
+ * environment-dependent check that silently fails in tests. Checking DOMException too makes this
+ * correct regardless of which runtime threw it.
+ */
+function isAbortError(err: unknown): boolean {
+  return (err instanceof DOMException || err instanceof Error) && err.name === 'AbortError';
+}
+
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -33,13 +43,68 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+export interface DefinitionAlternative {
+  partOfSpeech: string;
+  definition: string;
+}
+
+type RawEntry = { meanings?: Array<{ partOfSpeech?: unknown; definitions?: Array<{ definition?: unknown }> }> };
+
+/**
+ * dictionaryapi.dev (a Wiktionary wrapper) returns every meaning it has for a word, not just the
+ * common one — order reflects the source data's own structure (sometimes historical, sometimes by
+ * part of speech), not frequency of use, so the "first" sense can be the obscure one. This flattens
+ * every entry/meaning/definition in the response so callers can offer the rest as alternatives
+ * instead of silently discarding them.
+ */
+function parseAlternatives(data: unknown): DefinitionAlternative[] {
+  if (!Array.isArray(data)) return [];
+  const out: DefinitionAlternative[] = [];
+  const seen = new Set<string>();
+  for (const entry of data as RawEntry[]) {
+    for (const meaning of entry?.meanings ?? []) {
+      const partOfSpeech = typeof meaning.partOfSpeech === 'string' ? meaning.partOfSpeech : '';
+      for (const d of meaning.definitions ?? []) {
+        const definition = d?.definition;
+        if (typeof definition !== 'string' || definition.length === 0) continue;
+        const key = `${partOfSpeech} ${definition}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ partOfSpeech, definition });
+      }
+    }
+  }
+  return out;
+}
+
+/** Formats an alternative the same way fetchDefinitions() formats its chosen definition. */
+export function formatDefinition(alt: DefinitionAlternative): string {
+  return alt.partOfSpeech ? `(${alt.partOfSpeech}) ${alt.definition}` : alt.definition;
+}
+
 function extractDefinition(data: unknown): string | null {
-  if (!Array.isArray(data)) return null;
-  const meaning = (data[0] as { meanings?: Array<{ partOfSpeech?: unknown; definitions?: Array<{ definition?: unknown }> }> })?.meanings?.[0];
-  const def = meaning?.definitions?.[0]?.definition;
-  if (typeof def !== 'string' || def.length === 0) return null;
-  const pos = meaning?.partOfSpeech;
-  return typeof pos === 'string' && pos.length > 0 ? `(${pos}) ${def}` : def;
+  const first = parseAlternatives(data)[0];
+  return first ? formatDefinition(first) : null;
+}
+
+/**
+ * Fetches every meaning dictionaryapi.dev has for a single word, for a user to browse and pick from
+ * when the definition fetchDefinitions() picked (the first one) turns out to be the wrong sense.
+ * Unlike fetchDefinitions(), this is meant to be called on demand from the definition editor, not as
+ * part of a rate-limited import batch — so no retry/backoff here; a failure just yields no alternatives.
+ */
+export async function fetchAlternateDefinitions(
+  word: string,
+  signal?: AbortSignal,
+): Promise<DefinitionAlternative[]> {
+  try {
+    const res = await fetch(API + word.toLowerCase(), { signal });
+    if (!res.ok) return [];
+    return parseAlternatives(await res.json());
+  } catch (err) {
+    if (isAbortError(err)) throw err;
+    return [];
+  }
 }
 
 interface Attempt { definition: string; source: 'api' | 'none'; rateLimited: boolean }
@@ -54,7 +119,7 @@ async function fetchOne(word: string, signal?: AbortSignal): Promise<Attempt> {
     const definition = extractDefinition(await res.json());
     return definition ? { definition, source: 'api', rateLimited: false } : NOT_FOUND;
   } catch (err) {
-    if (err instanceof Error && err.name === 'AbortError') throw err;
+    if (isAbortError(err)) throw err;
     return NOT_FOUND; // per-word network failure never blocks the batch
   }
 }

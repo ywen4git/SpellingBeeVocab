@@ -1,10 +1,13 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { afterEach, vi } from 'vitest';
 import App from '../../App';
 import { DB_KEY } from '../../lib/storage';
 import { knownWordEntry, newWordEntry } from '../../lib/leitner';
 import { SCHEMA_VERSION } from '../../lib/types';
 import type { VocabWord } from '../../lib/types';
+
+afterEach(() => vi.unstubAllGlobals());
 
 function seed(...words: VocabWord[]) {
   localStorage.setItem(DB_KEY, JSON.stringify({
@@ -54,6 +57,51 @@ it('edits a definition from the list', async () => {
     definition: 'a gilled fungus',
     definitionSource: 'manual',
   });
+});
+
+it('links out to Google to look up the word being edited', async () => {
+  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  await openWords();
+  await userEvent.click(screen.getByRole('button', { name: /AGARIC/ }));
+  await userEvent.click(screen.getByRole('button', { name: /edit definition/i }));
+  const link = screen.getByRole('link', { name: /look up on google/i });
+  expect(link).toHaveAttribute('href', 'https://www.google.com/search?q=define%20AGARIC');
+  expect(link).toHaveAttribute('target', '_blank');
+});
+
+it('lets the user preview and swap in an alternate dictionary definition', async () => {
+  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  vi.stubGlobal('fetch', vi.fn(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => [{
+      meanings: [{ partOfSpeech: 'noun', definitions: [{ definition: 'A gilled fungus, often edible.' }] }],
+    }],
+  })));
+  await openWords();
+  await userEvent.click(screen.getByRole('button', { name: /AGARIC/ }));
+  await userEvent.click(screen.getByRole('button', { name: /edit definition/i }));
+  await userEvent.click(screen.getByRole('button', { name: /see other dictionary definitions/i }));
+  await screen.findByText('(noun) A gilled fungus, often edible.');
+  await userEvent.click(screen.getByRole('button', { name: /^use$/i }));
+  expect(screen.getByRole('textbox', { name: /definition for AGARIC/i })).toHaveValue(
+    '(noun) A gilled fungus, often edible.',
+  );
+  await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+  expect(JSON.parse(localStorage.getItem(DB_KEY)!).words.AGARIC).toMatchObject({
+    definition: '(noun) A gilled fungus, often edible.',
+    definitionSource: 'manual',
+  });
+});
+
+it('shows a message when no other definitions are found', async () => {
+  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, json: async () => ({}) })));
+  await openWords();
+  await userEvent.click(screen.getByRole('button', { name: /AGARIC/ }));
+  await userEvent.click(screen.getByRole('button', { name: /edit definition/i }));
+  await userEvent.click(screen.getByRole('button', { name: /see other dictionary definitions/i }));
+  await screen.findByText('No other definitions found.');
 });
 
 it('deletes only after inline confirm', async () => {

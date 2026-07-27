@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchDefinitions } from '../dictionary';
+import { fetchAlternateDefinitions, fetchDefinitions } from '../dictionary';
 import { PLACEHOLDER_DEFINITION } from '../types';
 
 const entry = (pos: string, def: string) =>
@@ -70,5 +70,46 @@ describe('fetchDefinitions', () => {
     await expect(
       fetchDefinitions(['AAAA', 'BBBB'], { ...opts, signal: controller.signal }),
     ).rejects.toMatchObject({ name: 'AbortError' });
+  });
+});
+
+describe('fetchAlternateDefinitions', () => {
+  it('flattens every meaning across every entry, not just the first', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ok([
+      { meanings: [{ partOfSpeech: 'noun', definitions: [{ definition: 'A fungus.' }, { definition: 'A basket.' }] }] },
+      { meanings: [{ partOfSpeech: 'adjective', definitions: [{ definition: 'Fungal in nature.' }] }] },
+    ])));
+    const alts = await fetchAlternateDefinitions('AGARIC');
+    expect(alts).toEqual([
+      { partOfSpeech: 'noun', definition: 'A fungus.' },
+      { partOfSpeech: 'noun', definition: 'A basket.' },
+      { partOfSpeech: 'adjective', definition: 'Fungal in nature.' },
+    ]);
+  });
+
+  it('drops exact duplicate part-of-speech/definition pairs', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ok([
+      { meanings: [{ partOfSpeech: 'noun', definitions: [{ definition: 'A fungus.' }] }] },
+      { meanings: [{ partOfSpeech: 'noun', definitions: [{ definition: 'A fungus.' }] }] },
+    ])));
+    const alts = await fetchAlternateDefinitions('AGARIC');
+    expect(alts).toEqual([{ partOfSpeech: 'noun', definition: 'A fungus.' }]);
+  });
+
+  it('returns an empty list on a 404 instead of throwing', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => status(404)));
+    await expect(fetchAlternateDefinitions('XYZZY')).resolves.toEqual([]);
+  });
+
+  it('returns an empty list on a network error instead of throwing', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('offline'); }));
+    await expect(fetchAlternateDefinitions('AGARIC')).resolves.toEqual([]);
+  });
+
+  it('still rejects with AbortError on abort, rather than swallowing it', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new DOMException('Aborted', 'AbortError');
+    }));
+    await expect(fetchAlternateDefinitions('AGARIC')).rejects.toMatchObject({ name: 'AbortError' });
   });
 });
