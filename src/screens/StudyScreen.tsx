@@ -9,18 +9,31 @@ export default function StudyScreen() {
   const [now, setNow] = useState(() => Date.now());
   const [flipped, setFlipped] = useState(false);
   const [editing, setEditing] = useState(false);
+  // Session-only: defers a card to the back of today's queue without touching its box/dueAt, so
+  // skipping never costs a review or counts as a lapse. Not persisted — leaving Study resets it.
+  const [skipped, setSkipped] = useState<string[]>([]);
 
   const due = dueWords(db, now);
-  const current = due[0];
+  const dueWordSet = new Set(due.map((w) => w.word));
+  const deferred = skipped.filter((word) => dueWordSet.has(word));
+  const queue = [...due.filter((w) => !deferred.includes(w.word)), ...deferred.map((word) => db.words[word])];
+  const current = queue[0];
   const all = Object.values(db.words);
   const learning = all.filter((w) => w.status === 'learning').length;
   const mastered = all.length - learning;
 
   const grade = (gotIt: boolean) => {
     gradeWord(current.word, gotIt);
+    setSkipped((prev) => prev.filter((w) => w !== current.word));
     setFlipped(false);
     setEditing(false);
     setNow(Date.now());
+  };
+
+  const skip = () => {
+    setSkipped((prev) => [...prev.filter((w) => w !== current.word), current.word]);
+    setFlipped(false);
+    setEditing(false);
   };
 
   if (!current) {
@@ -72,9 +85,16 @@ export default function StudyScreen() {
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-3 gap-4">
         <button onClick={() => grade(false)} className="min-h-[44px] rounded-xl bg-slate-200 py-3 font-semibold text-slate-700">
           ❌ Missed
+        </button>
+        <button
+          onClick={skip}
+          disabled={due.length <= 1}
+          className="min-h-[44px] rounded-xl border border-slate-300 bg-white py-3 font-semibold text-slate-500 disabled:opacity-50"
+        >
+          ⏭️ Skip
         </button>
         <button onClick={() => grade(true)} className="min-h-[44px] rounded-xl bg-amber-400 py-3 font-semibold text-slate-950 shadow-sm">
           ✅ Got it

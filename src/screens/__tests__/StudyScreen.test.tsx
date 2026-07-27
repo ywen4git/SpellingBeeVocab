@@ -34,6 +34,40 @@ it('"Missed" sends the word back to box 1 and counts a lapse', async () => {
   expect(stored.words.NUANCE).toMatchObject({ box: 1, lapses: 1 });
 });
 
+it('"Skip" defers a card behind the other due words without touching its schedule', async () => {
+  const now = Date.now() - 1000;
+  seed(
+    { ...newWordEntry('AGARIC', 'a gilled mushroom', 'api', now), box: 1 },
+    { ...newWordEntry('NUANCE', 'a subtle difference', 'api', now), box: 2 },
+  );
+  render(<App />);
+  // box 1 sorts before box 2, so AGARIC is current
+  expect(screen.getByRole('heading', { name: 'AGARIC' })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: /skip/i }));
+  expect(screen.getByRole('heading', { name: 'NUANCE' })).toBeInTheDocument();
+  const stored = JSON.parse(localStorage.getItem(DB_KEY)!);
+  expect(stored.words.AGARIC).toMatchObject({ box: 1, dueAt: now, lapses: 0 });
+});
+
+it('"Skip" resets the card to its front, unflipped', async () => {
+  const now = Date.now() - 1000;
+  seed(
+    { ...newWordEntry('AGARIC', 'a gilled mushroom', 'api', now), box: 1 },
+    { ...newWordEntry('NUANCE', 'a subtle difference', 'api', now), box: 2 },
+  );
+  render(<App />);
+  await userEvent.click(screen.getByRole('heading', { name: 'AGARIC' })); // flip
+  await userEvent.click(screen.getByRole('button', { name: /skip/i }));
+  expect(screen.queryByText(/subtle difference/)).not.toBeInTheDocument();
+  expect(screen.getByText(/tap to reveal/i)).toBeInTheDocument();
+});
+
+it('disables "Skip" when there is nothing else due to skip to', async () => {
+  seed(newWordEntry('AGARIC', 'a gilled mushroom', 'api', Date.now() - 1000));
+  render(<App />);
+  expect(screen.getByRole('button', { name: /skip/i })).toBeDisabled();
+});
+
 it('editing a definition from the card back marks it manual', async () => {
   seed(newWordEntry('AGARIC', 'a gilled mushroom', 'api', Date.now() - 1000));
   render(<App />);
