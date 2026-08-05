@@ -1,5 +1,16 @@
 # Bee Vocab Builder Implementation Plan
 
+> **Status (2026-07-27): historical.** This plan's 13 tasks built the original v1
+> app and are all complete — the checkboxes and embedded code below describe that
+> v1 snapshot, not the current codebase. Since v1 shipped, `parser.ts`, `ocr.ts`,
+> `dictionary.ts`, `AddScreen.tsx`, and `StudyScreen.tsx` have all changed
+> substantially (hive-detection cross-validation, a third gold-aware OCR pass,
+> OCR misread correction, multi-screenshot upload, pangram grouping, alternate
+> dictionary definitions, a Study "Skip" button — see the design spec's §6–8 for
+> what's actually there now). This file is kept only as a record of how v1 was
+> originally built via TDD, not updated task-by-task as the app evolves — for
+> current behavior, read `docs/superpowers/specs/2026-07-12-spelling-bee-pwa-design.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the offline-first PWA specified in `docs/superpowers/specs/2026-07-12-spelling-bee-pwa-design.md`: NYT Spelling Bee answer screenshots → in-browser OCR → reviewed word list → auto-fetched definitions → Leitner-box flashcards, with export/import backup.

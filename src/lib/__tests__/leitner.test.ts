@@ -70,14 +70,14 @@ describe('grading', () => {
 describe('sessions', () => {
   const now = at(2026, 7, 12, 12);
 
-  it('dueWords: only due learning words, box asc then dueAt asc', () => {
+  it('dueWords: only due learning words, box desc then dueAt asc', () => {
     const boxTwo = { ...newWordEntry('AAAA', '', 'none', now - 100), box: 2 as const };
     const laterBoxOne = newWordEntry('BBBB', '', 'none', now - 50);
     const earlierBoxOne = newWordEntry('CCCC', '', 'none', now - 200);
     const notDue = { ...newWordEntry('DDDD', '', 'none', now), dueAt: now + 1000 };
     const mastered = knownWordEntry('EEEE', '', 'none', now);
     const result = dueWords(db(boxTwo, laterBoxOne, earlierBoxOne, notDue, mastered), now);
-    expect(result.map((w) => w.word)).toEqual(['CCCC', 'BBBB', 'AAAA']);
+    expect(result.map((w) => w.word)).toEqual(['AAAA', 'CCCC', 'BBBB']);
   });
 
   it('nextDueAt: earliest future due among learning words, null when none', () => {

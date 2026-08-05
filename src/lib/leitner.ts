@@ -51,10 +51,11 @@ export function unmaster(w: VocabWord, now: number): VocabWord {
   return { ...w, status: 'learning', box: 3, dueAt: now };
 }
 
+/** Box 3 (closest to Mastered) first, so a backlog banks graduations before fresh box-1 words. */
 export function dueWords(db: VocabDb, now: number): VocabWord[] {
   return Object.values(db.words)
     .filter((w) => w.status === 'learning' && w.dueAt <= now)
-    .sort((a, b) => a.box - b.box || a.dueAt - b.dueAt || a.word.localeCompare(b.word));
+    .sort((a, b) => b.box - a.box || a.dueAt - b.dueAt || a.word.localeCompare(b.word));
 }
 
 export function nextDueAt(db: VocabDb, now: number): number | null {

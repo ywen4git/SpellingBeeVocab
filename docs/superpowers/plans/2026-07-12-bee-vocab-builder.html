@@ -1,0 +1,3144 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+	"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+
+<head>
+<title>2026-07-12-bee-vocab-builder.html</title>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8"/>
+
+</head>
+
+<body>
+
+<h1>Bee Vocab Builder Implementation Plan</h1>
+
+<blockquote>
+  <p><strong>Status (2026-07-27): historical.</strong> This plan's 13 tasks built the original v1
+app and are all complete — the checkboxes and embedded code below describe that
+v1 snapshot, not the current codebase. Since v1 shipped, <code>parser.ts</code>, <code>ocr.ts</code>,
+<code>dictionary.ts</code>, <code>AddScreen.tsx</code>, and <code>StudyScreen.tsx</code> have all changed
+substantially (hive-detection cross-validation, a third gold-aware OCR pass,
+OCR misread correction, multi-screenshot upload, pangram grouping, alternate
+dictionary definitions, a Study "Skip" button — see the design spec's §6–8 for
+what's actually there now). This file is kept only as a record of how v1 was
+originally built via TDD, not updated task-by-task as the app evolves — for
+current behavior, read <code>docs/superpowers/specs/2026-07-12-spelling-bee-pwa-design.md</code>.</p>
+
+<p><strong>For agentic workers:</strong> REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (<code>- [ ]</code>) syntax for tracking.</p>
+</blockquote>
+
+<p><strong>Goal:</strong> Build the offline-first PWA specified in <code>docs/superpowers/specs/2026-07-12-spelling-bee-pwa-design.md</code>: NYT Spelling Bee answer screenshots → in-browser OCR → reviewed word list → auto-fetched definitions → Leitner-box flashcards, with export/import backup.</p>
+
+<p><strong>Architecture:</strong> Pure TypeScript logic core (<code>src/lib/</code>: leitner, parser, storage, dictionary, ocr) with no React dependencies, unit-tested with Vitest. Thin React screens on top, all state owned by one <code>VocabProvider</code> context that persists to a single versioned <code>localStorage</code> key. Static hosting on GitHub Pages at <code>/SpellingBeeVocab/</code>.</p>
+
+<p><strong>Tech Stack:</strong> React 18 + TypeScript (strict) + Vite, Tailwind CSS v4 (<code>@tailwindcss/vite</code>), tesseract.js (self-hosted WASM assets), vite-plugin-pwa, Vitest + React Testing Library, GitHub Actions.</p>
+
+<h2>Global Constraints</h2>
+
+<ul>
+<li>Vite <code>base: '/SpellingBeeVocab/'</code> — everywhere, from Task 1 on.</li>
+<li>React pinned to 18 (<code>react@18</code>, <code>react-dom@18</code>, matching <code>@types</code>).</li>
+<li>TypeScript <code>strict: true</code>; <code>npm run typecheck</code> (<code>tsc --noEmit</code>) must pass at every commit.</li>
+<li>Storage keys exactly: <code>beevocab.db.v1</code> (live), <code>beevocab.db.corrupt</code> (quarantine), <code>spelling_bee_vocab</code> (legacy draft-app key, migrated then removed).</li>
+<li>Word keys are UPPERCASE strings; <code>schemaVersion: 1</code>.</li>
+<li>Leitner intervals: Box 1 = 1 day, Box 2 = 3 days, Box 3 = 7 days; day boundary at 4:00 AM local time.</li>
+<li>Placeholder definition copy, exactly: <code>No definition found — tap to edit.</code></li>
+<li>Dictionary API: <code>https://api.dictionaryapi.dev/api/v2/entries/en/{word.toLowerCase()}</code>; 300 ms gap between requests; on HTTP 429 wait 2 s and retry once.</li>
+<li>No <code>alert()</code>/<code>confirm()</code>/<code>prompt()</code> anywhere — use the <code>Toast</code> component and inline confirms.</li>
+<li>Touch targets ≥ 44 px (<code>min-h-[44px]</code> on interactive controls).</li>
+<li><code>src/lib/</code> modules never import React; <code>leitner.ts</code> and <code>parser.ts</code> take explicit <code>now</code>/input params (no hidden <code>Date.now()</code>).</li>
+<li>Every commit message ends with <code>Co-Authored-By: Claude Fable 5 &lt;noreply@anthropic.com&gt;</code> (shown as a second <code>-m</code> flag below).</li>
+<li>Node 22 in CI. Package manager: npm.</li>
+</ul>
+
+<hr />
+
+<h3>Task 1: Scaffold the Vite + React + TypeScript + Tailwind app</h3>
+
+<p><strong>Files:</strong>
+- Create: <code>.gitignore</code>, <code>package.json</code>, <code>tsconfig.json</code>, <code>vite.config.ts</code>, <code>index.html</code>, <code>src/index.css</code>, <code>src/main.tsx</code>, <code>src/App.tsx</code></p>
+
+<p><strong>Interfaces:</strong>
+- Consumes: nothing (first code task).
+- Produces: a building app shell; <code>npm run build</code>, <code>npm run dev</code>, <code>npm run typecheck</code> scripts; <code>src/App.tsx</code> default-exports <code>App</code> (rewritten in Task 7 — later tasks may replace it freely as long as the <code>🐝 Bee Vocab Builder</code> header stays).</p>
+
+<ul>
+<li>[ ] <strong>Step 1: Write <code>.gitignore</code></strong></li>
+</ul>
+
+<p><code>gitignore
+node_modules/
+dist/
+dev-dist/
+public/tesseract/
+*.local
+</code></p>
+
+<ul>
+<li>[ ] <strong>Step 2: Write <code>package.json</code> skeleton</strong></li>
+</ul>
+
+<p><code>json
+{
+  "name": "spelling-bee-vocab",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit &amp;&amp; vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  }
+}
+</code></p>
+
+<ul>
+<li>[ ] <strong>Step 3: Install dependencies</strong></li>
+</ul>
+
+<p>Run:
+<code>bash
+npm install react@18 react-dom@18
+npm install -D typescript vite @vitejs/plugin-react tailwindcss @tailwindcss/vite @types/react@18 @types/react-dom@18
+</code>
+Expected: both commands exit 0; <code>package.json</code> now lists the deps with resolved versions.</p>
+
+<ul>
+<li>[ ] <strong>Step 4: Write <code>tsconfig.json</code></strong></li>
+</ul>
+
+<p><code>json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["vite/client"]
+  },
+  "include": ["src", "vite.config.ts"]
+}
+</code></p>
+
+<ul>
+<li>[ ] <strong>Step 5: Write <code>vite.config.ts</code></strong></li>
+</ul>
+
+<p>```ts
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';</p>
+
+<p>export default defineConfig({
+  base: '/SpellingBeeVocab/',
+  plugins: [react(), tailwindcss()],
+});
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 6: Write <code>index.html</code></strong></li>
+</ul>
+
+<p><code>html
+&lt;!doctype html&gt;
+&lt;html lang="en"&gt;
+  &lt;head&gt;
+    &lt;meta charset="UTF-8" /&gt;
+    &lt;meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" /&gt;
+    &lt;meta name="theme-color" content="#f59e0b" /&gt;
+    &lt;title&gt;Bee Vocab Builder&lt;/title&gt;
+  &lt;/head&gt;
+  &lt;body&gt;
+    &lt;div id="root"&gt;&lt;/div&gt;
+    &lt;script type="module" src="/src/main.tsx"&gt;&lt;/script&gt;
+  &lt;/body&gt;
+&lt;/html&gt;
+</code></p>
+
+<ul>
+<li>[ ] <strong>Step 7: Write <code>src/index.css</code></strong></li>
+</ul>
+
+<p><code>css
+@import "tailwindcss";
+</code></p>
+
+<ul>
+<li>[ ] <strong>Step 8: Write <code>src/main.tsx</code></strong></li>
+</ul>
+
+<p>```tsx
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import App from './App';
+import './index.css';</p>
+
+<p>createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 9: Write minimal <code>src/App.tsx</code></strong></li>
+</ul>
+
+<p><code>tsx
+export default function App() {
+  return (
+    &lt;div className="min-h-screen bg-slate-50 p-4 text-center text-slate-800"&gt;
+      &lt;h1 className="text-2xl font-bold text-amber-500"&gt;🐝 Bee Vocab Builder&lt;/h1&gt;
+    &lt;/div&gt;
+  );
+}
+</code></p>
+
+<ul>
+<li>[ ] <strong>Step 10: Verify the build</strong></li>
+</ul>
+
+<p>Run: <code>npm run build</code>
+Expected: exits 0, ends with <code>✓ built in …</code> and a <code>dist/</code> directory containing <code>index.html</code> whose asset URLs start with <code>/SpellingBeeVocab/</code>.
+Check: <code>grep -o '/SpellingBeeVocab/[^"]*' dist/index.html</code> prints at least one JS and one CSS path.</p>
+
+<ul>
+<li>[ ] <strong>Step 11: Commit</strong></li>
+</ul>
+
+<p><code>bash
+git add -A
+git commit -m "feat: scaffold Vite + React 18 + TS + Tailwind app shell with GitHub Pages base path" -m "Co-Authored-By: Claude Fable 5 &lt;noreply@anthropic.com&gt;"
+</code></p>
+
+<hr />
+
+<h3>Task 2: Test infrastructure and GitHub Actions workflows</h3>
+
+<p><strong>Files:</strong>
+- Modify: <code>vite.config.ts</code>, <code>tsconfig.json</code>, <code>package.json</code> (scripts)
+- Create: <code>src/test-setup.ts</code>, <code>src/__tests__/App.smoke.test.tsx</code>, <code>.github/workflows/ci.yml</code>, <code>.github/workflows/deploy.yml</code></p>
+
+<p><strong>Interfaces:</strong>
+- Consumes: Task 1 shell.
+- Produces: <code>npm test</code> (vitest run, jsdom, RTL, jest-dom matchers, auto <code>cleanup()</code> + <code>localStorage.clear()</code> after each test); CI on every push/PR; Pages deploy on push to <code>main</code>. All later test files rely on the automatic localStorage cleanup.</p>
+
+<ul>
+<li>[ ] <strong>Step 1: Install test dependencies</strong></li>
+</ul>
+
+<p>Run:
+<code>bash
+npm install -D vitest jsdom @testing-library/react @testing-library/jest-dom @testing-library/user-event
+</code>
+Expected: exit 0.</p>
+
+<ul>
+<li>[ ] <strong>Step 2: Wire vitest into <code>vite.config.ts</code></strong> (replace full file)</li>
+</ul>
+
+<p>```ts
+/// <reference types="vitest/config" />
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';</p>
+
+<p>export default defineConfig({
+  base: '/SpellingBeeVocab/',
+  plugins: [react(), tailwindcss()],
+  test: {
+    environment: 'jsdom',
+    setupFiles: './src/test-setup.ts',
+    globals: true,
+  },
+});
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 3: Update <code>tsconfig.json</code> types line</strong></li>
+</ul>
+
+<p>Change the <code>"types"</code> entry to:
+<code>json
+    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom"]
+</code></p>
+
+<ul>
+<li>[ ] <strong>Step 4: Add test scripts to <code>package.json</code></strong></li>
+</ul>
+
+<p>Add to <code>"scripts"</code>:
+<code>json
+    "test": "vitest run",
+    "test:watch": "vitest"
+</code></p>
+
+<ul>
+<li>[ ] <strong>Step 5: Write <code>src/test-setup.ts</code></strong></li>
+</ul>
+
+<p>```ts
+import '@testing-library/jest-dom/vitest';
+import { cleanup } from '@testing-library/react';
+import { afterEach } from 'vitest';</p>
+
+<p>afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 6: Write the failing smoke test <code>src/__tests__/App.smoke.test.tsx</code></strong></li>
+</ul>
+
+<p>```tsx
+import { render, screen } from '@testing-library/react';
+import App from '../App';</p>
+
+<p>it('renders the app header', () => {
+  render(<App />);
+  expect(screen.getByRole('heading', { name: /bee vocab builder/i })).toBeInTheDocument();
+});
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 7: Run the test</strong></li>
+</ul>
+
+<p>Run: <code>npm test</code>
+Expected: PASS — <code>Test Files  1 passed</code>. (It passes immediately; this step verifies the harness itself works. If it errors on config, fix config, not the test.)</p>
+
+<ul>
+<li>[ ] <strong>Step 8: Write <code>.github/workflows/ci.yml</code></strong></li>
+</ul>
+
+<p><code>yaml
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+</code></p>
+
+<ul>
+<li>[ ] <strong>Step 9: Write <code>.github/workflows/deploy.yml</code></strong></li>
+</ul>
+
+<p><code>yaml
+name: Deploy
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - id: deployment
+        uses: actions/deploy-pages@v4
+</code></p>
+
+<p>(Deploy can only be exercised once the repo is pushed to GitHub with Pages source set to "GitHub Actions" — note this in the README in Task 13. Local verification is YAML validity + <code>npm run build</code> passing.)</p>
+
+<ul>
+<li>[ ] <strong>Step 10: Verify typecheck + test + build all pass</strong></li>
+</ul>
+
+<p>Run: <code>npm run typecheck &amp;&amp; npm test &amp;&amp; npm run build</code>
+Expected: all exit 0.</p>
+
+<ul>
+<li>[ ] <strong>Step 11: Commit</strong></li>
+</ul>
+
+<p><code>bash
+git add -A
+git commit -m "feat: add Vitest+RTL test infra and GitHub Actions CI/Pages workflows" -m "Co-Authored-By: Claude Fable 5 &lt;noreply@anthropic.com&gt;"
+</code></p>
+
+<hr />
+
+<h3>Task 3: Core types and Leitner scheduling (<code>types.ts</code>, <code>leitner.ts</code>)</h3>
+
+<p><strong>Files:</strong>
+- Create: <code>src/lib/types.ts</code>, <code>src/lib/leitner.ts</code>
+- Test: <code>src/lib/__tests__/leitner.test.ts</code></p>
+
+<p><strong>Interfaces:</strong>
+- Consumes: nothing.
+- Produces (used by every later task):
+  - <code>types.ts</code>: <code>WordStatus</code>, <code>DefinitionSource</code>, <code>Box</code>, <code>VocabWord</code>, <code>VocabDb</code>, <code>SCHEMA_VERSION</code> (=1), <code>PLACEHOLDER_DEFINITION</code>, <code>emptyDb(): VocabDb</code>
+  - <code>leitner.ts</code>: <code>BOX_INTERVAL_DAYS: Record&lt;Box, number&gt;</code>; <code>nextDayBoundary(now: number, days: number): number</code>; <code>newWordEntry(word: string, definition: string, definitionSource: DefinitionSource, now: number): VocabWord</code>; <code>knownWordEntry(...same signature...): VocabWord</code> (mastered on import); <code>gradeGotIt(w: VocabWord, now: number): VocabWord</code>; <code>gradeMissed(w, now): VocabWord</code>; <code>resetToLearning(w, now): VocabWord</code>; <code>unmaster(w, now): VocabWord</code>; <code>dueWords(db: VocabDb, now: number): VocabWord[]</code>; <code>nextDueAt(db: VocabDb, now: number): number | null</code></p>
+
+<ul>
+<li>[ ] <strong>Step 1: Write <code>src/lib/types.ts</code></strong></li>
+</ul>
+
+<p>```ts
+export type WordStatus = 'learning' | 'mastered';
+export type DefinitionSource = 'api' | 'manual' | 'none';
+export type Box = 1 | 2 | 3;</p>
+
+<p>export interface VocabWord {
+  word: string;                 // UPPERCASE, unique key
+  definition: string;
+  definitionSource: DefinitionSource;
+  status: WordStatus;
+  box: Box;                     // meaningful while learning; stays at 3 after mastery
+  dueAt: number;                // epoch ms; ignored when mastered
+  addedAt: number;              // epoch ms
+  lapses: number;               // demotions to box 1
+}</p>
+
+<p>export interface VocabDb {
+  schemaVersion: 1;
+  words: Record<string, VocabWord>;
+}</p>
+
+<p>export const SCHEMA<em>VERSION = 1 as const;
+export const PLACEHOLDER</em>DEFINITION = 'No definition found — tap to edit.';</p>
+
+<p>export function emptyDb(): VocabDb {
+  return { schemaVersion: SCHEMA_VERSION, words: {} };
+}
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 2: Write the failing tests <code>src/lib/__tests__/leitner.test.ts</code></strong></li>
+</ul>
+
+<p>```ts
+import { describe, expect, it } from 'vitest';
+import {
+  BOX<em>INTERVAL</em>DAYS, dueWords, gradeGotIt, gradeMissed, knownWordEntry,
+  newWordEntry, nextDayBoundary, nextDueAt, resetToLearning, unmaster,
+} from '../leitner';
+import type { VocabDb, VocabWord } from '../types';</p>
+
+<p>const at = (y: number, mo: number, d: number, h: number, mi = 0) =>
+  new Date(y, mo - 1, d, h, mi).getTime();</p>
+
+<p>function db(...words: VocabWord[]): VocabDb {
+  return { schemaVersion: 1, words: Object.fromEntries(words.map((w) => [w.word, w])) };
+}</p>
+
+<p>describe('nextDayBoundary (4 AM local study-day boundary)', () => {
+  it('11 PM + 1 day -> 4 AM next morning', () => {
+    expect(nextDayBoundary(at(2026, 7, 12, 23), 1)).toBe(at(2026, 7, 13, 4));
+  });
+  it('2 AM still belongs to the previous study day', () => {
+    expect(nextDayBoundary(at(2026, 7, 13, 2), 1)).toBe(at(2026, 7, 13, 4));
+  });
+  it('7 AM + 1 day -> 4 AM the next calendar day', () => {
+    expect(nextDayBoundary(at(2026, 7, 13, 7), 1)).toBe(at(2026, 7, 14, 4));
+  });
+  it('supports multi-day intervals', () => {
+    expect(nextDayBoundary(at(2026, 7, 12, 12), 3)).toBe(at(2026, 7, 15, 4));
+  });
+});</p>
+
+<p>describe('grading', () => {
+  const now = at(2026, 7, 12, 12);
+  const w = newWordEntry('AGARIC', 'a mushroom', 'api', now);</p>
+
+<p>it('new words start learning, box 1, due immediately', () => {
+    expect(w).toMatchObject({ status: 'learning', box: 1, dueAt: now, lapses: 0 });
+  });
+  it('known words import as mastered', () => {
+    expect(knownWordEntry('TIARA', 'a crown', 'api', now)).toMatchObject({
+      status: 'mastered', box: 3, addedAt: now,
+    });
+  });
+  it('got it: box 1 -> 2 with a 3-day interval', () => {
+    const g = gradeGotIt(w, now);
+    expect(g.box).toBe(2);
+    expect(g.dueAt).toBe(nextDayBoundary(now, BOX<em>INTERVAL</em>DAYS[2]));
+  });
+  it('got it: box 2 -> 3 with a 7-day interval', () => {
+    const g = gradeGotIt({ ...w, box: 2 }, now);
+    expect(g.box).toBe(3);
+    expect(g.dueAt).toBe(nextDayBoundary(now, 7));
+  });
+  it('got it in box 3 masters the word', () => {
+    expect(gradeGotIt({ ...w, box: 3 }, now).status).toBe('mastered');
+  });
+  it('missed: back to box 1 tomorrow, lapse counted', () => {
+    const g = gradeMissed({ ...w, box: 3 }, now);
+    expect(g).toMatchObject({ box: 1, lapses: 1 });
+    expect(g.dueAt).toBe(nextDayBoundary(now, 1));
+  });
+  it('resetToLearning: learning box 1, due now', () => {
+    const m = knownWordEntry('TIARA', 'a crown', 'api', now - 999);
+    expect(resetToLearning(m, now)).toMatchObject({ status: 'learning', box: 1, dueAt: now });
+  });
+  it('unmaster: learning box 3, due now', () => {
+    const m = knownWordEntry('TIARA', 'a crown', 'api', now - 999);
+    expect(unmaster(m, now)).toMatchObject({ status: 'learning', box: 3, dueAt: now });
+  });
+});</p>
+
+<p>describe('sessions', () => {
+  const now = at(2026, 7, 12, 12);</p>
+
+<p>it('dueWords: only due learning words, box asc then dueAt asc', () => {
+    const boxTwo = { ...newWordEntry('AAAA', '', 'none', now - 100), box: 2 as const };
+    const laterBoxOne = newWordEntry('BBBB', '', 'none', now - 50);
+    const earlierBoxOne = newWordEntry('CCCC', '', 'none', now - 200);
+    const notDue = { ...newWordEntry('DDDD', '', 'none', now), dueAt: now + 1000 };
+    const mastered = knownWordEntry('EEEE', '', 'none', now);
+    const result = dueWords(db(boxTwo, laterBoxOne, earlierBoxOne, notDue, mastered), now);
+    expect(result.map((w) => w.word)).toEqual(['CCCC', 'BBBB', 'AAAA']);
+  });</p>
+
+<p>it('nextDueAt: earliest future due among learning words, null when none', () => {
+    const soon = { ...newWordEntry('AAAA', '', 'none', now), dueAt: now + 1000 };
+    const later = { ...newWordEntry('BBBB', '', 'none', now), dueAt: now + 5000 };
+    expect(nextDueAt(db(soon, later), now)).toBe(now + 1000);
+    expect(nextDueAt(db(), now)).toBeNull();
+  });
+});
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 3: Run tests to verify they fail</strong></li>
+</ul>
+
+<p>Run: <code>npm test -- src/lib/__tests__/leitner.test.ts</code>
+Expected: FAIL — cannot resolve <code>../leitner</code>.</p>
+
+<ul>
+<li>[ ] <strong>Step 4: Write <code>src/lib/leitner.ts</code></strong></li>
+</ul>
+
+<p>```ts
+import type { Box, DefinitionSource, VocabDb, VocabWord } from './types';</p>
+
+<p>export const BOX<em>INTERVAL</em>DAYS: Record<Box, number> = { 1: 1, 2: 3, 3: 7 };</p>
+
+<p>const HOUR = 3<em>600</em>000;
+const DAY<em>START</em>HOUR = 4;</p>
+
+<p>/** 4 AM local-time boundary <code>days</code> study-days after <code>now</code>. A study day runs 4 AM → 4 AM. */
+export function nextDayBoundary(now: number, days: number): number {
+  const shifted = new Date(now - DAY<em>START</em>HOUR * HOUR);
+  return new Date(
+    shifted.getFullYear(), shifted.getMonth(), shifted.getDate() + days,
+    DAY<em>START</em>HOUR, 0, 0, 0,
+  ).getTime();
+}</p>
+
+<p>export function newWordEntry(
+  word: string, definition: string, definitionSource: DefinitionSource, now: number,
+): VocabWord {
+  return {
+    word, definition, definitionSource,
+    status: 'learning', box: 1, dueAt: now, addedAt: now, lapses: 0,
+  };
+}</p>
+
+<p>/** "Already know" import: straight to mastered, present in stats but never scheduled. */
+export function knownWordEntry(
+  word: string, definition: string, definitionSource: DefinitionSource, now: number,
+): VocabWord {
+  return {
+    word, definition, definitionSource,
+    status: 'mastered', box: 3, dueAt: now, addedAt: now, lapses: 0,
+  };
+}</p>
+
+<p>export function gradeGotIt(w: VocabWord, now: number): VocabWord {
+  if (w.box === 3) return { ...w, status: 'mastered' };
+  const box = (w.box + 1) as Box;
+  return { ...w, box, dueAt: nextDayBoundary(now, BOX<em>INTERVAL</em>DAYS[box]) };
+}</p>
+
+<p>export function gradeMissed(w: VocabWord, now: number): VocabWord {
+  return { ...w, box: 1, dueAt: nextDayBoundary(now, 1), lapses: w.lapses + 1 };
+}</p>
+
+<p>export function resetToLearning(w: VocabWord, now: number): VocabWord {
+  return { ...w, status: 'learning', box: 1, dueAt: now };
+}</p>
+
+<p>export function unmaster(w: VocabWord, now: number): VocabWord {
+  return { ...w, status: 'learning', box: 3, dueAt: now };
+}</p>
+
+<p>export function dueWords(db: VocabDb, now: number): VocabWord[] {
+  return Object.values(db.words)
+    .filter((w) => w.status === 'learning' &amp;&amp; w.dueAt &lt;= now)
+    .sort((a, b) => a.box - b.box || a.dueAt - b.dueAt || a.word.localeCompare(b.word));
+}</p>
+
+<p>export function nextDueAt(db: VocabDb, now: number): number | null {
+  let min: number | null = null;
+  for (const w of Object.values(db.words)) {
+    if (w.status === 'learning' &amp;&amp; w.dueAt > now &amp;&amp; (min === null || w.dueAt &lt; min)) {
+      min = w.dueAt;
+    }
+  }
+  return min;
+}
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 5: Run tests to verify they pass</strong></li>
+</ul>
+
+<p>Run: <code>npm test -- src/lib/__tests__/leitner.test.ts</code>
+Expected: PASS — all tests green.</p>
+
+<ul>
+<li>[ ] <strong>Step 6: Typecheck and commit</strong></li>
+</ul>
+
+<p><code>bash
+npm run typecheck
+git add src/lib
+git commit -m "feat: core vocab types and Leitner scheduling with 4 AM study-day boundary" -m "Co-Authored-By: Claude Fable 5 &lt;noreply@anthropic.com&gt;"
+</code></p>
+
+<hr />
+
+<h3>Task 4: OCR text parser (<code>parser.ts</code>)</h3>
+
+<p><strong>Files:</strong>
+- Create: <code>src/lib/parser.ts</code>, <code>src/lib/__fixtures__/nyt-answers-ocr.txt</code>
+- Test: <code>src/lib/__tests__/parser.test.ts</code></p>
+
+<p><strong>Interfaces:</strong>
+- Consumes: nothing.
+- Produces: <code>UI_BLOCKLIST: ReadonlySet&lt;string&gt;</code>; <code>interface ParseResult { candidates: string[]; alreadyKnown: string[]; filteredUi: string[] }</code>; <code>parseCandidates(rawText: string, existingWords: ReadonlySet&lt;string&gt;): ParseResult</code> — all three lists UPPERCASE, deduped, alphabetized. Task 10's AddScreen consumes <code>ParseResult</code> directly.</p>
+
+<ul>
+<li>[ ] <strong>Step 1: Write the fixture <code>src/lib/__fixtures__/nyt-answers-ocr.txt</code></strong></li>
+</ul>
+
+<p>This mimics tesseract output for an NYT app "Yesterday's Answers" screenshot (UI chrome plus a two-section word list). If you later run a real screenshot through the app, paste the actual OCR text over this file and update the expected list — the test contract stays the same.</p>
+
+<p>```text
+Yesterday’s Answers
+Saturday, July 11, 2026</p>
+
+<p>PANGRAM
+ABANDON</p>
+
+<p>AGARIC   ANTIC    ARIA
+CAIRN    NAIAD    NUANCE
+RADIAN   TIARA    TRAIN</p>
+
+<p>You found 23 words
+GENIUS · 158 points
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 2: Write the failing tests <code>src/lib/__tests__/parser.test.ts</code></strong></li>
+</ul>
+
+<p>```ts
+import { describe, expect, it } from 'vitest';
+import { parseCandidates, UI_BLOCKLIST } from '../parser';
+import fixture from '../<strong>fixtures</strong>/nyt-answers-ocr.txt?raw';</p>
+
+<p>describe('parseCandidates', () => {
+  it('extracts 4+ letter words, uppercased, deduped, sorted', () => {
+    const r = parseCandidates('naiad agaric Agaric ant', new Set());
+    expect(r.candidates).toEqual(['AGARIC', 'NAIAD']);
+  });</p>
+
+<p>it('filters NYT UI chrome, month and day names into filteredUi', () => {
+    const r = parseCandidates('PANGRAM GENIUS JULY SATURDAY AGARIC', new Set());
+    expect(r.candidates).toEqual(['AGARIC']);
+    expect(r.filteredUi).toEqual(expect.arrayContaining(['GENIUS', 'JULY', 'PANGRAM', 'SATURDAY']));
+  });</p>
+
+<p>it('splits words already in the collection into alreadyKnown', () => {
+    const r = parseCandidates('AGARIC TIARA', new Set(['TIARA']));
+    expect(r.candidates).toEqual(['AGARIC']);
+    expect(r.alreadyKnown).toEqual(['TIARA']);
+  });</p>
+
+<p>it('handles a realistic answers-page OCR dump', () => {
+    const r = parseCandidates(fixture, new Set(['TIARA']));
+    expect(r.candidates).toEqual([
+      'ABANDON', 'AGARIC', 'ANTIC', 'ARIA', 'CAIRN', 'NAIAD', 'NUANCE', 'RADIAN', 'TRAIN',
+    ]);
+    expect(r.alreadyKnown).toEqual(['TIARA']);
+    expect(r.candidates).not.toContain('PANGRAM');
+    expect(r.candidates).not.toContain('WORDS');
+  });</p>
+
+<p>it('exports the blocklist for reuse', () => {
+    expect(UI_BLOCKLIST.has('PANGRAM')).toBe(true);
+  });
+});
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 3: Run tests to verify they fail</strong></li>
+</ul>
+
+<p>Run: <code>npm test -- src/lib/__tests__/parser.test.ts</code>
+Expected: FAIL — cannot resolve <code>../parser</code>.</p>
+
+<ul>
+<li>[ ] <strong>Step 4: Write <code>src/lib/parser.ts</code></strong></li>
+</ul>
+
+<p>```ts
+const NYT_CHROME = [
+  'PANGRAM', 'ANSWERS', 'YESTERDAY', 'YESTERDAYS', 'TODAY', 'TODAYS',
+  'WORDS', 'POINTS', 'GENIUS', 'QUEEN', 'SPELLING', 'GAMES', 'EDITED',
+  'FOUND', 'RANKINGS',
+];
+const MONTHS = [
+  'JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'JUNE', 'JULY',
+  'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER',
+]; // MAY is 3 letters and never matches anyway
+const DAYS = [
+  'SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY',
+];</p>
+
+<p>/** NYT app UI words that must not become flashcards. Extend here when new junk shows up. */
+export const UI<em>BLOCKLIST: ReadonlySet<string> = new Set([...NYT</em>CHROME, ...MONTHS, ...DAYS]);</p>
+
+<p>export interface ParseResult {
+  candidates: string[];
+  alreadyKnown: string[];
+  filteredUi: string[];
+}</p>
+
+<p>export function parseCandidates(
+  rawText: string,
+  existingWords: ReadonlySet<string>,
+): ParseResult {
+  const matches = rawText.toUpperCase().match(/[A-Z]{4,}/g) ?? [];
+  const candidates: string[] = [];
+  const alreadyKnown: string[] = [];
+  const filteredUi: string[] = [];
+  for (const word of new Set(matches)) {
+    if (UI_BLOCKLIST.has(word)) filteredUi.push(word);
+    else if (existingWords.has(word)) alreadyKnown.push(word);
+    else candidates.push(word);
+  }
+  candidates.sort();
+  alreadyKnown.sort();
+  filteredUi.sort();
+  return { candidates, alreadyKnown, filteredUi };
+}
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 5: Run tests to verify they pass</strong></li>
+</ul>
+
+<p>Run: <code>npm test -- src/lib/__tests__/parser.test.ts</code>
+Expected: PASS.</p>
+
+<ul>
+<li>[ ] <strong>Step 6: Typecheck and commit</strong></li>
+</ul>
+
+<p><code>bash
+npm run typecheck
+git add src/lib
+git commit -m "feat: OCR text parser with NYT UI blocklist and already-known split" -m "Co-Authored-By: Claude Fable 5 &lt;noreply@anthropic.com&gt;"
+</code></p>
+
+<hr />
+
+<h3>Task 5: Persistence, migration, backup merge (<code>storage.ts</code>)</h3>
+
+<p><strong>Files:</strong>
+- Create: <code>src/lib/storage.ts</code>
+- Test: <code>src/lib/__tests__/storage.test.ts</code></p>
+
+<p><strong>Interfaces:</strong>
+- Consumes: <code>types.ts</code> (<code>VocabDb</code>, <code>emptyDb</code>, <code>SCHEMA_VERSION</code>), <code>leitner.ts</code> (<code>newWordEntry</code>, <code>knownWordEntry</code>).
+- Produces: <code>DB_KEY = 'beevocab.db.v1'</code>, <code>CORRUPT_KEY = 'beevocab.db.corrupt'</code>, <code>LEGACY_KEY = 'spelling_bee_vocab'</code>; <code>interface LoadResult { db: VocabDb; recoveredFromCorrupt: boolean; migratedLegacy: boolean }</code>; <code>loadDb(now: number): LoadResult</code>; <code>saveDb(db: VocabDb): boolean</code> (false on quota errors, never throws); <code>exportDb(db: VocabDb): string</code>; <code>parseBackup(text: string): VocabDb | null</code>; <code>interface MergeResult { merged: VocabDb; added: number; existing: number }</code>; <code>mergeDb(current: VocabDb, incoming: VocabDb): MergeResult</code>.</p>
+
+<ul>
+<li>[ ] <strong>Step 1: Write the failing tests <code>src/lib/__tests__/storage.test.ts</code></strong></li>
+</ul>
+
+<p>```ts
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  CORRUPT<em>KEY, DB</em>KEY, LEGACY_KEY, exportDb, loadDb, mergeDb, parseBackup, saveDb,
+} from '../storage';
+import { emptyDb } from '../types';
+import { knownWordEntry, newWordEntry } from '../leitner';</p>
+
+<p>const NOW = 1<em>750</em>000<em>000</em>000;</p>
+
+<p>beforeEach(() => localStorage.clear());</p>
+
+<p>function sampleDb() {
+  const db = emptyDb();
+  db.words.AGARIC = newWordEntry('AGARIC', 'a mushroom', 'api', NOW);
+  return db;
+}</p>
+
+<p>describe('loadDb', () => {
+  it('returns an empty db on first run', () => {
+    expect(loadDb(NOW)).toEqual({ db: emptyDb(), recoveredFromCorrupt: false, migratedLegacy: false });
+  });</p>
+
+<p>it('round-trips through saveDb', () => {
+    const db = sampleDb();
+    expect(saveDb(db)).toBe(true);
+    expect(loadDb(NOW).db).toEqual(db);
+  });</p>
+
+<p>it('quarantines corrupt data instead of deleting it', () => {
+    localStorage.setItem(DB<em>KEY, 'not json{');
+    const r = loadDb(NOW);
+    expect(r.recoveredFromCorrupt).toBe(true);
+    expect(r.db).toEqual(emptyDb());
+    expect(localStorage.getItem(CORRUPT</em>KEY)).toBe('not json{');
+    expect(localStorage.getItem(DB_KEY)).toBeNull();
+  });</p>
+
+<p>it('migrates the legacy draft-app key once', () => {
+    localStorage.setItem(LEGACY<em>KEY, JSON.stringify({
+      new: [{ word: 'AGARIC', definition: 'a mushroom', timestamp: 1 }],
+      mastered: [{ word: 'TIARA', definition: 'a crown', timestamp: 2 }],
+    }));
+    const r = loadDb(NOW);
+    expect(r.migratedLegacy).toBe(true);
+    expect(r.db.words.AGARIC).toMatchObject({ status: 'learning', box: 1, dueAt: NOW, definitionSource: 'api' });
+    expect(r.db.words.TIARA).toMatchObject({ status: 'mastered' });
+    expect(localStorage.getItem(LEGACY</em>KEY)).toBeNull();
+    expect(loadDb(NOW).db.words.AGARIC).toBeDefined(); // persisted under the new key
+  });
+});</p>
+
+<p>describe('saveDb', () => {
+  it('reports quota failures instead of throwing', () => {
+    const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota', 'QuotaExceededError');
+    });
+    expect(saveDb(sampleDb())).toBe(false);
+    spy.mockRestore();
+  });
+});</p>
+
+<p>describe('parseBackup', () => {
+  it('accepts its own export', () => {
+    const db = sampleDb();
+    expect(parseBackup(exportDb(db))).toEqual(db);
+  });</p>
+
+<p>it.each([
+    'not json{',
+    '{"schemaVersion":99,"words":{}}',
+    '{"schemaVersion":1}',
+    '{"schemaVersion":1,"words":[]}',
+    '{"schemaVersion":1,"words":{"A":{"word":"A","status":"nope"}}}',
+  ])('rejects invalid input: %s', (text) => {
+    expect(parseBackup(text)).toBeNull();
+  });
+});</p>
+
+<p>describe('mergeDb', () => {
+  it('adds unknown words and counts them', () => {
+    const r = mergeDb(emptyDb(), sampleDb());
+    expect(r.added).toBe(1);
+    expect(r.existing).toBe(0);
+    expect(r.merged.words.AGARIC).toBeDefined();
+  });</p>
+
+<p>it('newer addedAt wins for words present in both', () => {
+    const older = newWordEntry('AGARIC', 'old def', 'api', NOW - 10);
+    const newer = { ...newWordEntry('AGARIC', 'new def', 'api', NOW), box: 2 as const };
+    const r = mergeDb(
+      { schemaVersion: 1, words: { AGARIC: older } },
+      { schemaVersion: 1, words: { AGARIC: newer } },
+    );
+    expect(r.merged.words.AGARIC).toMatchObject({ definition: 'new def', box: 2 });
+    expect(r.existing).toBe(1);
+  });</p>
+
+<p>it('mastered on either side always wins', () => {
+    const masteredOld = knownWordEntry('TIARA', 'a crown', 'api', NOW - 10);
+    const learningNew = newWordEntry('TIARA', 'a crown', 'api', NOW);
+    const r = mergeDb(
+      { schemaVersion: 1, words: { TIARA: masteredOld } },
+      { schemaVersion: 1, words: { TIARA: learningNew } },
+    );
+    expect(r.merged.words.TIARA.status).toBe('mastered');
+  });
+});
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 2: Run tests to verify they fail</strong></li>
+</ul>
+
+<p>Run: <code>npm test -- src/lib/__tests__/storage.test.ts</code>
+Expected: FAIL — cannot resolve <code>../storage</code>.</p>
+
+<ul>
+<li>[ ] <strong>Step 3: Write <code>src/lib/storage.ts</code></strong></li>
+</ul>
+
+<p>```ts
+import type { VocabDb } from './types';
+import { emptyDb, SCHEMA_VERSION } from './types';
+import { knownWordEntry, newWordEntry } from './leitner';</p>
+
+<p>export const DB<em>KEY = 'beevocab.db.v1';
+export const CORRUPT</em>KEY = 'beevocab.db.corrupt';
+export const LEGACY<em>KEY = 'spelling</em>bee_vocab';</p>
+
+<p>export interface LoadResult {
+  db: VocabDb;
+  recoveredFromCorrupt: boolean;
+  migratedLegacy: boolean;
+}</p>
+
+<p>export function loadDb(now: number): LoadResult {
+  const raw = localStorage.getItem(DB<em>KEY);
+  if (raw !== null) {
+    const db = parseBackup(raw);
+    if (db) return { db, recoveredFromCorrupt: false, migratedLegacy: false };
+    // Never silently discard user data: quarantine it, then start fresh.
+    localStorage.setItem(CORRUPT</em>KEY, raw);
+    localStorage.removeItem(DB<em>KEY);
+    return { db: emptyDb(), recoveredFromCorrupt: true, migratedLegacy: false };
+  }
+  const legacy = readLegacy(now);
+  if (legacy) {
+    localStorage.removeItem(LEGACY</em>KEY);
+    saveDb(legacy);
+    return { db: legacy, recoveredFromCorrupt: false, migratedLegacy: true };
+  }
+  return { db: emptyDb(), recoveredFromCorrupt: false, migratedLegacy: false };
+}</p>
+
+<p>interface LegacyItem { word?: unknown; definition?: unknown }</p>
+
+<p>function readLegacy(now: number): VocabDb | null {
+  const raw = localStorage.getItem(LEGACY_KEY);
+  if (raw === null) return null;
+  try {
+    const data = JSON.parse(raw) as { new?: LegacyItem[]; mastered?: LegacyItem[] };
+    if (!Array.isArray(data.new) || !Array.isArray(data.mastered)) return null;
+    const db = emptyDb();
+    for (const item of data.new) {
+      if (typeof item.word !== 'string') continue;
+      db.words[item.word] = newWordEntry(
+        item.word, typeof item.definition === 'string' ? item.definition : '', 'api', now,
+      );
+    }
+    for (const item of data.mastered) {
+      if (typeof item.word !== 'string') continue;
+      db.words[item.word] = knownWordEntry(
+        item.word, typeof item.definition === 'string' ? item.definition : '', 'api', now,
+      );
+    }
+    return db;
+  } catch {
+    return null;
+  }
+}</p>
+
+<p>export function saveDb(db: VocabDb): boolean {
+  try {
+    localStorage.setItem(DB_KEY, JSON.stringify(db));
+    return true;
+  } catch {
+    return false; // quota exceeded — caller warns the user
+  }
+}</p>
+
+<p>export function exportDb(db: VocabDb): string {
+  return JSON.stringify(db, null, 2);
+}</p>
+
+<p>export function parseBackup(text: string): VocabDb | null {
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (typeof data !== 'object' || data === null) return null;
+  const d = data as Record<string, unknown>;
+  if (d.schemaVersion !== SCHEMA_VERSION) return null;
+  if (typeof d.words !== 'object' || d.words === null || Array.isArray(d.words)) return null;
+  for (const entry of Object.values(d.words as Record<string, unknown>)) {
+    const w = entry as Record<string, unknown> | null;
+    if (
+      w === null || typeof w.word !== 'string' ||
+      (w.status !== 'learning' &amp;&amp; w.status !== 'mastered')
+    ) {
+      return null;
+    }
+  }
+  return data as VocabDb;
+}</p>
+
+<p>export interface MergeResult {
+  merged: VocabDb;
+  added: number;
+  existing: number;
+}</p>
+
+<p>export function mergeDb(current: VocabDb, incoming: VocabDb): MergeResult {
+  const words = { ...current.words };
+  let added = 0;
+  let existing = 0;
+  for (const [key, inc] of Object.entries(incoming.words)) {
+    const cur = words[key];
+    if (!cur) {
+      words[key] = inc;
+      added += 1;
+      continue;
+    }
+    existing += 1;
+    const winner = inc.addedAt > cur.addedAt ? inc : cur;
+    const anyMastered = inc.status === 'mastered' || cur.status === 'mastered';
+    words[key] = anyMastered &amp;&amp; winner.status !== 'mastered'
+      ? { ...winner, status: 'mastered' } // never un-master via import
+      : winner;
+  }
+  return { merged: { schemaVersion: SCHEMA_VERSION, words }, added, existing };
+}
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 4: Run tests to verify they pass</strong></li>
+</ul>
+
+<p>Run: <code>npm test -- src/lib/__tests__/storage.test.ts</code>
+Expected: PASS.</p>
+
+<ul>
+<li>[ ] <strong>Step 5: Typecheck and commit</strong></li>
+</ul>
+
+<p><code>bash
+npm run typecheck
+git add src/lib
+git commit -m "feat: versioned localStorage persistence with corrupt quarantine, legacy migration, backup merge" -m "Co-Authored-By: Claude Fable 5 &lt;noreply@anthropic.com&gt;"
+</code></p>
+
+<hr />
+
+<h3>Task 6: Definition fetching (<code>dictionary.ts</code>)</h3>
+
+<p><strong>Files:</strong>
+- Create: <code>src/lib/dictionary.ts</code>
+- Test: <code>src/lib/__tests__/dictionary.test.ts</code></p>
+
+<p><strong>Interfaces:</strong>
+- Consumes: <code>types.ts</code> (<code>PLACEHOLDER_DEFINITION</code>).
+- Produces: <code>interface DefinitionResult { word: string; definition: string; source: 'api' | 'none' }</code>; <code>interface FetchOptions { signal?: AbortSignal; gapMs?: number; retryMs?: number; onProgress?: (done: number, total: number) =&gt; void }</code>; <code>fetchDefinitions(words: string[], opts?: FetchOptions): Promise&lt;DefinitionResult[]&gt;</code> — sequential, 300 ms default gap, one 2 s-delayed retry on 429, per-word fallback to placeholder, rejects with <code>AbortError</code> when <code>signal</code> aborts.</p>
+
+<ul>
+<li>[ ] <strong>Step 1: Write the failing tests <code>src/lib/__tests__/dictionary.test.ts</code></strong></li>
+</ul>
+
+<p>```ts
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { fetchDefinitions } from '../dictionary';
+import { PLACEHOLDER_DEFINITION } from '../types';</p>
+
+<p>const entry = (pos: string, def: string) =>
+  [{ meanings: [{ partOfSpeech: pos, definitions: [{ definition: def }] }] }];
+const ok = (body: unknown) => ({ ok: true, status: 200, json: async () => body });
+const status = (code: number) => ({ ok: false, status: code, json: async () => ({}) });
+const opts = { gapMs: 0, retryMs: 0 };</p>
+
+<p>afterEach(() => vi.unstubAllGlobals());</p>
+
+<p>describe('fetchDefinitions', () => {
+  it('extracts the first definition, prefixed with part of speech', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ok(entry('noun', 'A fungus.'))));
+    const [r] = await fetchDefinitions(['AGARIC'], opts);
+    expect(r).toEqual({ word: 'AGARIC', definition: '(noun) A fungus.', source: 'api' });
+    expect(fetch).toHaveBeenCalledWith(
+      'https://api.dictionaryapi.dev/api/v2/entries/en/agaric',
+      expect.anything(),
+    );
+  });</p>
+
+<p>it('404 falls back to the editable placeholder', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => status(404)));
+    const [r] = await fetchDefinitions(['XYZZY'], opts);
+    expect(r).toEqual({ word: 'XYZZY', definition: PLACEHOLDER_DEFINITION, source: 'none' });
+  });</p>
+
+<p>it('retries once on 429', async () => {
+    const f = vi.fn()
+      .mockResolvedValueOnce(status(429))
+      .mockResolvedValueOnce(ok(entry('noun', 'A crown.')));
+    vi.stubGlobal('fetch', f);
+    const [r] = await fetchDefinitions(['TIARA'], opts);
+    expect(f).toHaveBeenCalledTimes(2);
+    expect(r.source).toBe('api');
+  });</p>
+
+<p>it('a second 429 becomes not-found', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => status(429)));
+    const [r] = await fetchDefinitions(['TIARA'], opts);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(r.source).toBe('none');
+  });</p>
+
+<p>it('network errors do not block the rest of the batch', async () => {
+    const f = vi.fn()
+      .mockRejectedValueOnce(new TypeError('offline'))
+      .mockResolvedValueOnce(ok(entry('noun', 'A crown.')));
+    vi.stubGlobal('fetch', f);
+    const rs = await fetchDefinitions(['XYZZY', 'TIARA'], opts);
+    expect(rs[0].source).toBe('none');
+    expect(rs[1].source).toBe('api');
+  });</p>
+
+<p>it('reports progress after each word', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => status(404)));
+    const seen: Array&lt;[number, number]> = [];
+    await fetchDefinitions(['AAAA', 'BBBB'], { ...opts, onProgress: (d, t) => seen.push([d, t]) });
+    expect(seen).toEqual([[1, 2], [2, 2]]);
+  });</p>
+
+<p>it('abort rejects with AbortError', async () => {
+    const controller = new AbortController();
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      controller.abort();
+      throw new DOMException('Aborted', 'AbortError');
+    }));
+    await expect(
+      fetchDefinitions(['AAAA', 'BBBB'], { ...opts, signal: controller.signal }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+  });
+});
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 2: Run tests to verify they fail</strong></li>
+</ul>
+
+<p>Run: <code>npm test -- src/lib/__tests__/dictionary.test.ts</code>
+Expected: FAIL — cannot resolve <code>../dictionary</code>.</p>
+
+<ul>
+<li>[ ] <strong>Step 3: Write <code>src/lib/dictionary.ts</code></strong></li>
+</ul>
+
+<p>```ts
+import { PLACEHOLDER_DEFINITION } from './types';</p>
+
+<p>export interface DefinitionResult {
+  word: string;
+  definition: string;
+  source: 'api' | 'none';
+}</p>
+
+<p>export interface FetchOptions {
+  signal?: AbortSignal;
+  gapMs?: number;    // pause between words; dictionaryapi.dev throttles bursts
+  retryMs?: number;  // pause before the single 429 retry
+  onProgress?: (done: number, total: number) => void;
+}</p>
+
+<p>const API = 'https://api.dictionaryapi.dev/api/v2/entries/en/';</p>
+
+<p>function abortError(): DOMException {
+  return new DOMException('Aborted', 'AbortError');
+}</p>
+
+<p>function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortError());
+      return;
+    }
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => {
+      clearTimeout(timer);
+      reject(abortError());
+    }, { once: true });
+  });
+}</p>
+
+<p>function extractDefinition(data: unknown): string | null {
+  if (!Array.isArray(data)) return null;
+  const meaning = (data[0] as { meanings?: Array&lt;{ partOfSpeech?: unknown; definitions?: Array&lt;{ definition?: unknown }> }> })?.meanings?.[0];
+  const def = meaning?.definitions?.[0]?.definition;
+  if (typeof def !== 'string' || def.length === 0) return null;
+  const pos = meaning?.partOfSpeech;
+  return typeof pos === 'string' &amp;&amp; pos.length > 0 ? <code>(${pos}) ${def}</code> : def;
+}</p>
+
+<p>interface Attempt { definition: string; source: 'api' | 'none'; rateLimited: boolean }</p>
+
+<p>const NOT<em>FOUND: Attempt = { definition: PLACEHOLDER</em>DEFINITION, source: 'none', rateLimited: false };</p>
+
+<p>async function fetchOne(word: string, signal?: AbortSignal): Promise<Attempt> {
+  try {
+    const res = await fetch(API + word.toLowerCase(), { signal });
+    if (res.status === 429) return { ...NOT<em>FOUND, rateLimited: true };
+    if (!res.ok) return NOT</em>FOUND;
+    const definition = extractDefinition(await res.json());
+    return definition ? { definition, source: 'api', rateLimited: false } : NOT<em>FOUND;
+  } catch (err) {
+    if (err instanceof Error &amp;&amp; err.name === 'AbortError') throw err;
+    return NOT</em>FOUND; // per-word network failure never blocks the batch
+  }
+}</p>
+
+<p>export async function fetchDefinitions(
+  words: string[],
+  opts: FetchOptions = {},
+): Promise<DefinitionResult[]> {
+  const { signal, gapMs = 300, retryMs = 2000, onProgress } = opts;
+  const results: DefinitionResult[] = [];
+  for (let i = 0; i &lt; words.length; i++) {
+    if (i > 0) await sleep(gapMs, signal);
+    let attempt = await fetchOne(words[i], signal);
+    if (attempt.rateLimited) {
+      await sleep(retryMs, signal);
+      attempt = await fetchOne(words[i], signal);
+    }
+    results.push({ word: words[i], definition: attempt.definition, source: attempt.source });
+    onProgress?.(i + 1, words.length);
+  }
+  return results;
+}
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 4: Run tests to verify they pass</strong></li>
+</ul>
+
+<p>Run: <code>npm test -- src/lib/__tests__/dictionary.test.ts</code>
+Expected: PASS.</p>
+
+<ul>
+<li>[ ] <strong>Step 5: Typecheck and commit</strong></li>
+</ul>
+
+<p><code>bash
+npm run typecheck
+git add src/lib
+git commit -m "feat: sequential dictionary fetching with 429 backoff and per-word fallback" -m "Co-Authored-By: Claude Fable 5 &lt;noreply@anthropic.com&gt;"
+</code></p>
+
+<hr />
+
+<h3>Task 7: Toast, TabBar, VocabProvider, App shell with stub screens</h3>
+
+<p><strong>Files:</strong>
+- Create: <code>src/components/Toast.tsx</code>, <code>src/components/TabBar.tsx</code>, <code>src/context/VocabProvider.tsx</code>, <code>src/screens/StudyScreen.tsx</code>, <code>src/screens/AddScreen.tsx</code>, <code>src/screens/WordsScreen.tsx</code>, <code>src/screens/DataScreen.tsx</code>
+- Modify: <code>src/App.tsx</code> (full rewrite)
+- Test: <code>src/__tests__/App.test.tsx</code> (delete <code>src/__tests__/App.smoke.test.tsx</code> — superseded)</p>
+
+<p><strong>Interfaces:</strong>
+- Consumes: <code>storage.ts</code> (<code>loadDb</code>, <code>saveDb</code>, <code>mergeDb</code>), <code>leitner.ts</code> (grading/entry functions), <code>types.ts</code>, <code>dictionary.ts</code> (<code>DefinitionResult</code> type only).
+- Produces (all later screen tasks build on these):
+  - <code>Toast.tsx</code>: <code>ToastProvider</code>, <code>useToast(): { show(message: string): void }</code> — renders a <code>role="status"</code> element for 4 s.
+  - <code>TabBar.tsx</code>: <code>type Tab = 'study' | 'add' | 'words' | 'data'</code>; <code>TabBar({ tab, onChange }: { tab: Tab; onChange: (t: Tab) =&gt; void })</code>.
+  - <code>VocabProvider.tsx</code>: <code>VocabProvider</code>, <code>useVocab(): VocabContextValue</code>, <code>interface ImportSelection { learn: DefinitionResult[]; known: DefinitionResult[]; resets: string[] }</code>, where <code>VocabContextValue</code> is <code>{ db: VocabDb; commitImport(sel: ImportSelection): void; gradeWord(word: string, gotIt: boolean): void; editDefinition(word: string, definition: string): void; deleteWord(word: string): void; unmasterWord(word: string): void; importBackup(incoming: VocabDb): void; resetDb(): void }</code>.
+  - Screen files: default exports; Task 7 versions are stubs rendering <code>&lt;h2&gt;</code> headings (<code>Study</code>, <code>Add</code>, <code>Words</code>, <code>Data</code>) that Tasks 8/10/11/12 replace.</p>
+
+<ul>
+<li>[ ] <strong>Step 1: Write the failing test <code>src/__tests__/App.test.tsx</code></strong> (and delete <code>App.smoke.test.tsx</code>)</li>
+</ul>
+
+<p>```tsx
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import App from '../App';
+import { DB_KEY } from '../lib/storage';</p>
+
+<p>it('shows the Study tab by default and switches tabs', async () => {
+  render(<App />);
+  expect(screen.getByRole('heading', { name: /bee vocab builder/i })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'Study' })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: /^words$/i }));
+  expect(screen.getByRole('heading', { name: 'Words' })).toBeInTheDocument();
+});</p>
+
+<p>it('quarantines corrupt storage and tells the user via toast', () => {
+  localStorage.setItem(DB_KEY, '{broken');
+  render(<App />);
+  expect(screen.getByRole('status')).toHaveTextContent(/started fresh/i);
+});
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 2: Run test to verify it fails</strong></li>
+</ul>
+
+<p>Run: <code>npm test -- src/__tests__/App.test.tsx</code>
+Expected: FAIL — <code>App</code> has no tabs, provider, or toast yet, so the <code>Words</code> button and the <code>role="status"</code> element are missing.</p>
+
+<ul>
+<li>[ ] <strong>Step 3: Write <code>src/components/Toast.tsx</code></strong></li>
+</ul>
+
+<p>```tsx
+import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';</p>
+
+<p>interface ToastContextValue {
+  show: (message: string) => void;
+}</p>
+
+<p>const ToastContext = createContext<ToastContextValue | null>(null);</p>
+
+<p>export function ToastProvider({ children }: { children: ReactNode }) {
+  const [message, setMessage] = useState<string | null>(null);
+  const timer = useRef<number | undefined>(undefined);</p>
+
+<p>const show = useCallback((msg: string) => {
+    setMessage(msg);
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setMessage(null), 4000);
+  }, []);</p>
+
+<p>return (
+    <ToastContext.Provider value={{ show }}>
+      {children}
+      {message &amp;&amp; (
+        <div
+          role="status"
+          className="fixed bottom-20 left-1/2 z-50 max-w-[90vw] -translate-x-1/2 rounded-xl bg-slate-900 px-4 py-2 text-sm text-white shadow-lg"
+        >
+          {message}
+        </div>
+      )}
+    </ToastContext.Provider>
+  );
+}</p>
+
+<p>export function useToast(): ToastContextValue {
+  const ctx = useContext(ToastContext);
+  if (!ctx) throw new Error('useToast must be used inside ToastProvider');
+  return ctx;
+}
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 4: Write <code>src/components/TabBar.tsx</code></strong></li>
+</ul>
+
+<p>```tsx
+export type Tab = 'study' | 'add' | 'words' | 'data';</p>
+
+<p>const TABS: Array&lt;{ id: Tab; label: string; icon: string }> = [
+  { id: 'study', label: 'Study', icon: '🃏' },
+  { id: 'add', label: 'Add', icon: '📷' },
+  { id: 'words', label: 'Words', icon: '📚' },
+  { id: 'data', label: 'Data', icon: '💾' },
+];</p>
+
+<p>export function TabBar({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }) {
+  return (
+    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white">
+      <div className="mx-auto flex max-w-md">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => onChange(t.id)}
+            aria-current={tab === t.id ? 'page' : undefined}
+            className={<code>flex min-h-[44px] flex-1 flex-col items-center py-2 text-xs font-semibold ${
+              tab === t.id ? 'text-amber-600' : 'text-slate-500'
+            }</code>}
+          >
+            <span aria-hidden>{t.icon}</span>
+            {t.label}
+          </button>
+        ))}
+      </div>
+    </nav>
+  );
+}
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 5: Write <code>src/context/VocabProvider.tsx</code></strong></li>
+</ul>
+
+<p>```tsx
+import {
+  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode,
+} from 'react';
+import type { VocabDb, VocabWord } from '../lib/types';
+import { emptyDb } from '../lib/types';
+import {
+  gradeGotIt, gradeMissed, knownWordEntry, newWordEntry, resetToLearning, unmaster,
+} from '../lib/leitner';
+import { loadDb, mergeDb, saveDb } from '../lib/storage';
+import type { DefinitionResult } from '../lib/dictionary';
+import { useToast } from '../components/Toast';</p>
+
+<p>export interface ImportSelection {
+  learn: DefinitionResult[];
+  known: DefinitionResult[];
+  resets: string[];
+}</p>
+
+<p>interface VocabContextValue {
+  db: VocabDb;
+  commitImport: (sel: ImportSelection) => void;
+  gradeWord: (word: string, gotIt: boolean) => void;
+  editDefinition: (word: string, definition: string) => void;
+  deleteWord: (word: string) => void;
+  unmasterWord: (word: string) => void;
+  importBackup: (incoming: VocabDb) => void;
+  resetDb: () => void;
+}</p>
+
+<p>const VocabContext = createContext<VocabContextValue | null>(null);</p>
+
+<p>export function VocabProvider({ children }: { children: ReactNode }) {
+  const toast = useToast();
+  const [initial] = useState(() => loadDb(Date.now()));
+  const [db, setDb] = useState(initial.db);
+  const storageFailed = useRef(false);</p>
+
+<p>useEffect(() => {
+    if (initial.recoveredFromCorrupt) {
+      toast.show('Stored data was unreadable — saved a copy and started fresh.');
+    } else if (initial.migratedLegacy) {
+      toast.show('Imported your words from the previous app version.');
+    }
+  }, [initial, toast]);</p>
+
+<p>useEffect(() => {
+    const ok = saveDb(db);
+    if (!ok &amp;&amp; !storageFailed.current) {
+      storageFailed.current = true;
+      toast.show('Storage is full — export a backup from the Data tab.');
+    }
+    if (ok) storageFailed.current = false;
+  }, [db, toast]);</p>
+
+<p>const updateWord = useCallback((word: string, fn: (w: VocabWord) => VocabWord) => {
+    setDb((prev) => {
+      const cur = prev.words[word];
+      if (!cur) return prev;
+      return { ...prev, words: { ...prev.words, [word]: fn(cur) } };
+    });
+  }, []);</p>
+
+<p>const value = useMemo<VocabContextValue>(() => ({
+    db,
+    commitImport: ({ learn, known, resets }) => {
+      const now = Date.now();
+      setDb((prev) => {
+        const words = { ...prev.words };
+        for (const r of learn) words[r.word] = newWordEntry(r.word, r.definition, r.source, now);
+        for (const r of known) words[r.word] = knownWordEntry(r.word, r.definition, r.source, now);
+        for (const w of resets) if (words[w]) words[w] = resetToLearning(words[w], now);
+        return { ...prev, words };
+      });
+    },
+    gradeWord: (word, gotIt) =>
+      updateWord(word, (w) => (gotIt ? gradeGotIt(w, Date.now()) : gradeMissed(w, Date.now()))),
+    editDefinition: (word, definition) =>
+      updateWord(word, (w) => ({ ...w, definition, definitionSource: 'manual' })),
+    deleteWord: (word) =>
+      setDb((prev) => {
+        const words = { ...prev.words };
+        delete words[word];
+        return { ...prev, words };
+      }),
+    unmasterWord: (word) => updateWord(word, (w) => unmaster(w, Date.now())),
+    importBackup: (incoming) => setDb((prev) => mergeDb(prev, incoming).merged),
+    resetDb: () => setDb(emptyDb()),
+  }), [db, updateWord]);</p>
+
+<p>return <VocabContext.Provider value={value}>{children}</VocabContext.Provider>;
+}</p>
+
+<p>export function useVocab(): VocabContextValue {
+  const ctx = useContext(VocabContext);
+  if (!ctx) throw new Error('useVocab must be used inside VocabProvider');
+  return ctx;
+}
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 6: Write the four stub screens</strong></li>
+</ul>
+
+<p><code>src/screens/StudyScreen.tsx</code>:
+<code>tsx
+export default function StudyScreen() {
+  return &lt;h2 className="text-lg font-bold"&gt;Study&lt;/h2&gt;;
+}
+</code></p>
+
+<p><code>src/screens/AddScreen.tsx</code>:
+<code>tsx
+export default function AddScreen() {
+  return &lt;h2 className="text-lg font-bold"&gt;Add&lt;/h2&gt;;
+}
+</code></p>
+
+<p><code>src/screens/WordsScreen.tsx</code>:
+<code>tsx
+export default function WordsScreen() {
+  return &lt;h2 className="text-lg font-bold"&gt;Words&lt;/h2&gt;;
+}
+</code></p>
+
+<p><code>src/screens/DataScreen.tsx</code>:
+<code>tsx
+export default function DataScreen() {
+  return &lt;h2 className="text-lg font-bold"&gt;Data&lt;/h2&gt;;
+}
+</code></p>
+
+<ul>
+<li>[ ] <strong>Step 7: Rewrite <code>src/App.tsx</code></strong></li>
+</ul>
+
+<p>```tsx
+import { useState } from 'react';
+import { ToastProvider } from './components/Toast';
+import { TabBar, type Tab } from './components/TabBar';
+import { VocabProvider } from './context/VocabProvider';
+import StudyScreen from './screens/StudyScreen';
+import AddScreen from './screens/AddScreen';
+import WordsScreen from './screens/WordsScreen';
+import DataScreen from './screens/DataScreen';</p>
+
+<p>export default function App() {
+  const [tab, setTab] = useState<Tab>('study');
+  return (
+    <ToastProvider>
+      <VocabProvider>
+        <div className="min-h-screen bg-slate-50 text-slate-800">
+          <header className="mx-auto max-w-md px-4 pb-2 pt-6 text-center">
+            <h1 className="text-2xl font-bold text-amber-500">🐝 Bee Vocab Builder</h1>
+          </header>
+          <main className="mx-auto max-w-md px-4 pb-24">
+            {tab === 'study' &amp;&amp; <StudyScreen />}
+            {tab === 'add' &amp;&amp; <AddScreen />}
+            {tab === 'words' &amp;&amp; <WordsScreen />}
+            {tab === 'data' &amp;&amp; <DataScreen />}
+          </main>
+          <TabBar tab={tab} onChange={setTab} />
+        </div>
+      </VocabProvider>
+    </ToastProvider>
+  );
+}
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 8: Run tests to verify they pass</strong></li>
+</ul>
+
+<p>Run: <code>npm test</code>
+Expected: PASS — all test files green (smoke test file deleted, App test passing).</p>
+
+<ul>
+<li>[ ] <strong>Step 9: Typecheck and commit</strong></li>
+</ul>
+
+<p><code>bash
+npm run typecheck
+git add -A
+git commit -m "feat: app shell with tab navigation, toast system, and persistent VocabProvider" -m "Co-Authored-By: Claude Fable 5 &lt;noreply@anthropic.com&gt;"
+</code></p>
+
+<hr />
+
+<h3>Task 8: Study screen with flip card and grading</h3>
+
+<p><strong>Files:</strong>
+- Create: <code>src/lib/format.ts</code>, <code>src/components/DefinitionEditor.tsx</code>
+- Modify: <code>src/screens/StudyScreen.tsx</code> (replace stub)
+- Test: <code>src/lib/__tests__/format.test.ts</code>, <code>src/screens/__tests__/StudyScreen.test.tsx</code></p>
+
+<p><strong>Interfaces:</strong>
+- Consumes: <code>useVocab</code> (<code>db</code>, <code>gradeWord</code>, <code>editDefinition</code>), <code>leitner.ts</code> (<code>dueWords</code>, <code>nextDueAt</code>), <code>types.ts</code>.
+- Produces: <code>format.ts</code>: <code>formatUntil(ms: number): string</code> (e.g. <code>in 5 min</code>, <code>in 3 h</code>, <code>tomorrow</code>, <code>in 3 days</code>); <code>DefinitionEditor({ word, initial, onDone }: { word: string; initial: string; onDone: () =&gt; void })</code> — textarea + Save/Cancel, saves via <code>useVocab().editDefinition</code> (Task 11 reuses it).</p>
+
+<ul>
+<li>[ ] <strong>Step 1: Write the failing tests</strong></li>
+</ul>
+
+<p><code>src/lib/__tests__/format.test.ts</code>:
+```ts
+import { expect, it } from 'vitest';
+import { formatUntil } from '../format';</p>
+
+<p>it('formats durations for the next-due message', () => {
+  expect(formatUntil(5 * 60<em>000)).toBe('in 5 min');
+  expect(formatUntil(3 * 3</em>600<em>000)).toBe('in 3 h');
+  expect(formatUntil(30 * 3</em>600<em>000)).toBe('tomorrow');
+  expect(formatUntil(72 * 3</em>600_000)).toBe('in 3 days');
+});
+```</p>
+
+<p><code>src/screens/__tests__/StudyScreen.test.tsx</code>:
+```tsx
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import App from '../../App';
+import { DB<em>KEY } from '../../lib/storage';
+import { newWordEntry } from '../../lib/leitner';
+import { SCHEMA</em>VERSION } from '../../lib/types';
+import type { VocabWord } from '../../lib/types';</p>
+
+<p>function seed(...words: VocabWord[]) {
+  localStorage.setItem(DB<em>KEY, JSON.stringify({
+    schemaVersion: SCHEMA</em>VERSION,
+    words: Object.fromEntries(words.map((w) => [w.word, w])),
+  }));
+}</p>
+
+<p>it('flips the card and "Got it" advances the session', async () => {
+  seed(newWordEntry('AGARIC', 'a gilled mushroom', 'api', Date.now() - 1000));
+  render(<App />);
+  expect(screen.getByRole('heading', { name: 'AGARIC' })).toBeInTheDocument();
+  expect(screen.queryByText(/gilled mushroom/)).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('heading', { name: 'AGARIC' }));
+  expect(screen.getByText(/gilled mushroom/)).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: /got it/i }));
+  expect(screen.getByText(/all caught up/i)).toBeInTheDocument();
+  const stored = JSON.parse(localStorage.getItem(DB_KEY)!);
+  expect(stored.words.AGARIC.box).toBe(2);
+});</p>
+
+<p>it('"Missed" sends the word back to box 1 and counts a lapse', async () => {
+  seed({ ...newWordEntry('NUANCE', 'subtle difference', 'api', Date.now() - 1000), box: 2 });
+  render(<App />);
+  await userEvent.click(screen.getByRole('button', { name: /missed/i }));
+  const stored = JSON.parse(localStorage.getItem(DB_KEY)!);
+  expect(stored.words.NUANCE).toMatchObject({ box: 1, lapses: 1 });
+});</p>
+
+<p>it('editing a definition from the card back marks it manual', async () => {
+  seed(newWordEntry('AGARIC', 'a gilled mushroom', 'api', Date.now() - 1000));
+  render(<App />);
+  await userEvent.click(screen.getByRole('heading', { name: 'AGARIC' }));
+  await userEvent.click(screen.getByRole('button', { name: /edit definition/i }));
+  const box = screen.getByRole('textbox', { name: /definition for AGARIC/i });
+  await userEvent.clear(box);
+  await userEvent.type(box, 'a gilled fungus');
+  await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+  const stored = JSON.parse(localStorage.getItem(DB_KEY)!);
+  expect(stored.words.AGARIC).toMatchObject({
+    definition: 'a gilled fungus',
+    definitionSource: 'manual',
+  });
+});
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 2: Run tests to verify they fail</strong></li>
+</ul>
+
+<p>Run: <code>npm test -- src/lib/__tests__/format.test.ts src/screens/__tests__/StudyScreen.test.tsx</code>
+Expected: FAIL — <code>../format</code> unresolved; StudyScreen stub has no card.</p>
+
+<ul>
+<li>[ ] <strong>Step 3: Write <code>src/lib/format.ts</code></strong></li>
+</ul>
+
+<p><code>ts
+export function formatUntil(ms: number): string {
+  const mins = Math.max(1, Math.ceil(ms / 60_000));
+  if (mins &lt; 60) return `in ${mins} min`;
+  const hours = Math.round(mins / 60);
+  if (hours &lt;= 24) return `in ${hours} h`;
+  const days = Math.round(hours / 24);
+  return days === 1 ? 'tomorrow' : `in ${days} days`;
+}
+</code></p>
+
+<ul>
+<li>[ ] <strong>Step 4: Write <code>src/components/DefinitionEditor.tsx</code></strong></li>
+</ul>
+
+<p>```tsx
+import { useState } from 'react';
+import { useVocab } from '../context/VocabProvider';</p>
+
+<p>export function DefinitionEditor({
+  word, initial, onDone,
+}: { word: string; initial: string; onDone: () => void }) {
+  const { editDefinition } = useVocab();
+  const [text, setText] = useState(initial);
+  return (
+    <div className="flex w-full flex-col gap-2">
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={4}
+        aria-label={<code>Definition for ${word}</code>}
+        className="w-full rounded-xl border border-slate-300 p-2 text-sm"
+      />
+      <div className="flex gap-2">
+        <button onClick={onDone} className="min-h-[44px] flex-1 rounded-xl bg-slate-200 py-2 text-sm font-semibold">
+          Cancel
+        </button>
+        <button
+          onClick={() => { editDefinition(word, text.trim()); onDone(); }}
+          className="min-h-[44px] flex-1 rounded-xl bg-amber-400 py-2 text-sm font-semibold"
+        >
+          Save
+        </button>
+      </div>
+    </div>
+  );
+}
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 5: Replace <code>src/screens/StudyScreen.tsx</code></strong></li>
+</ul>
+
+<p>```tsx
+import { useState } from 'react';
+import { useVocab } from '../context/VocabProvider';
+import { dueWords, nextDueAt } from '../lib/leitner';
+import { formatUntil } from '../lib/format';
+import { DefinitionEditor } from '../components/DefinitionEditor';</p>
+
+<p>export default function StudyScreen() {
+  const { db, gradeWord } = useVocab();
+  const [now, setNow] = useState(() => Date.now());
+  const [flipped, setFlipped] = useState(false);
+  const [editing, setEditing] = useState(false);</p>
+
+<p>const due = dueWords(db, now);
+  const current = due[0];
+  const all = Object.values(db.words);
+  const learning = all.filter((w) => w.status === 'learning').length;
+  const mastered = all.length - learning;</p>
+
+<p>const grade = (gotIt: boolean) => {
+    gradeWord(current.word, gotIt);
+    setFlipped(false);
+    setEditing(false);
+    setNow(Date.now());
+  };</p>
+
+<p>if (!current) {
+    const next = nextDueAt(db, now);
+    return (
+      <div className="rounded-3xl border border-slate-100 bg-white p-8 text-center">
+        <span className="text-4xl" aria-hidden>🎉</span>
+        <h2 className="mt-2 text-lg font-bold">All caught up!</h2>
+        <p className="mt-1 text-sm text-slate-500">
+          {next
+            ? <code>Next review ${formatUntil(next - now)}.</code>
+            : 'Upload a screenshot on the Add tab to start learning.'}
+        </p>
+        <p className="mt-4 text-xs text-slate-400">{learning} learning · {mastered} mastered</p>
+      </div>
+    );
+  }</p>
+
+<p>return (
+    <div className="flex flex-col gap-4">
+      <p className="text-center text-sm text-slate-500">
+        {due.length} due · {learning} learning · {mastered} mastered
+      </p></p>
+
+<pre><code>  &lt;div
+    onClick={() =&gt; { if (!editing) setFlipped(!flipped); }}
+    className="flex min-h-[240px] cursor-pointer flex-col items-center justify-center rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-sm"
+  &gt;
+    &lt;span className="mb-3 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-700"&gt;
+      Box {current.box}
+    &lt;/span&gt;
+    {!flipped ? (
+      &lt;&gt;
+        &lt;h2 className="text-3xl font-black tracking-wide text-slate-900"&gt;{current.word}&lt;/h2&gt;
+        &lt;p className="mt-4 text-xs font-medium uppercase tracking-wider text-slate-400"&gt;Tap to reveal&lt;/p&gt;
+      &lt;/&gt;
+    ) : editing ? (
+      &lt;DefinitionEditor word={current.word} initial={current.definition} onDone={() =&gt; setEditing(false)} /&gt;
+    ) : (
+      &lt;&gt;
+        &lt;p className="text-base font-medium leading-relaxed text-slate-700"&gt;{current.definition}&lt;/p&gt;
+        &lt;button
+          onClick={(e) =&gt; { e.stopPropagation(); setEditing(true); }}
+          className="mt-4 min-h-[44px] text-xs font-semibold text-amber-600"
+        &gt;
+          Edit definition
+        &lt;/button&gt;
+      &lt;/&gt;
+    )}
+  &lt;/div&gt;
+
+  &lt;div className="grid grid-cols-2 gap-4"&gt;
+    &lt;button onClick={() =&gt; grade(false)} className="min-h-[44px] rounded-xl bg-slate-200 py-3 font-semibold text-slate-700"&gt;
+      ❌ Missed
+    &lt;/button&gt;
+    &lt;button onClick={() =&gt; grade(true)} className="min-h-[44px] rounded-xl bg-amber-400 py-3 font-semibold text-slate-950 shadow-sm"&gt;
+      ✅ Got it
+    &lt;/button&gt;
+  &lt;/div&gt;
+&lt;/div&gt;
+</code></pre>
+
+<p>);
+}
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 6: Run tests to verify they pass</strong></li>
+</ul>
+
+<p>Run: <code>npm test</code>
+Expected: PASS — all test files green.</p>
+
+<ul>
+<li>[ ] <strong>Step 7: Typecheck and commit</strong></li>
+</ul>
+
+<p><code>bash
+npm run typecheck
+git add -A
+git commit -m "feat: Study screen with flip card, Leitner grading, and inline definition editing" -m "Co-Authored-By: Claude Fable 5 &lt;noreply@anthropic.com&gt;"
+</code></p>
+
+<hr />
+
+<h3>Task 9: Tesseract assets script and OCR wrapper (<code>ocr.ts</code>)</h3>
+
+<p><strong>Files:</strong>
+- Create: <code>scripts/setup-tesseract-assets.mjs</code>, <code>src/lib/ocr.ts</code>
+- Modify: <code>package.json</code> (add <code>setup:tesseract</code> script)</p>
+
+<p><strong>Interfaces:</strong>
+- Consumes: nothing from the app (tesseract.js package).
+- Produces: <code>interface OcrProgress { label: string; progress: number }</code> (progress 0..1); <code>class OcrError extends Error</code>; <code>recognizeImage(file: File, onProgress: (p: OcrProgress) =&gt; void): Promise&lt;string&gt;</code> (raw OCR text; throws <code>OcrError</code> on failure); <code>terminateOcr(): Promise&lt;void&gt;</code>. Assets land in <code>public/tesseract/</code> (gitignored — already covered by Task 1's <code>.gitignore</code>).</p>
+
+<p>No unit tests: the WASM worker cannot run in jsdom. Verification is the script's file output, typecheck, and the end-to-end phone/browser smoke test in Task 13.</p>
+
+<ul>
+<li>[ ] <strong>Step 1: Install tesseract.js</strong></li>
+</ul>
+
+<p>Run: <code>npm install tesseract.js</code>
+Expected: exit 0.</p>
+
+<ul>
+<li>[ ] <strong>Step 2: Write <code>scripts/setup-tesseract-assets.mjs</code></strong></li>
+</ul>
+
+<p>Self-hosts all OCR assets so the app works offline (spec §9): worker JS and WASM cores copied from node_modules, English language data downloaded once (~11 MB, gitignored).</p>
+
+<p>```js
+import { copyFile, mkdir, readdir, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';</p>
+
+<p>const projectRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+const outDir = path.join(projectRoot, 'public', 'tesseract');
+await mkdir(outDir, { recursive: true });</p>
+
+<p>await copyFile(
+  path.join(projectRoot, 'node_modules', 'tesseract.js', 'dist', 'worker.min.js'),
+  path.join(outDir, 'worker.min.js'),
+);</p>
+
+<p>const coreDir = path.join(projectRoot, 'node_modules', 'tesseract.js-core');
+for (const f of await readdir(coreDir)) {
+  if (f.endsWith('.js') || f.endsWith('.wasm')) {
+    await copyFile(path.join(coreDir, f), path.join(outDir, f));
+  }
+}</p>
+
+<p>const lang = path.join(outDir, 'eng.traineddata.gz');
+if (!existsSync(lang)) {
+  console.log('downloading eng.traineddata.gz (~11 MB, one-time)…');
+  const res = await fetch('https://tessdata.projectnaptha.com/4.0.0/eng.traineddata.gz');
+  if (!res.ok) throw new Error(<code>traineddata download failed: HTTP ${res.status}</code>);
+  await writeFile(lang, Buffer.from(await res.arrayBuffer()));
+}
+console.log('tesseract assets ready in public/tesseract/');
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 3: Add the npm script</strong></li>
+</ul>
+
+<p>Add to <code>package.json</code> <code>"scripts"</code>:
+<code>json
+    "setup:tesseract": "node scripts/setup-tesseract-assets.mjs"
+</code></p>
+
+<ul>
+<li>[ ] <strong>Step 4: Run the script and verify output</strong></li>
+</ul>
+
+<p>Run: <code>npm run setup:tesseract &amp;&amp; ls public/tesseract/</code>
+Expected: prints <code>tesseract assets ready…</code>; listing shows <code>worker.min.js</code>, one or more <code>tesseract-core*.js</code>/<code>.wasm</code> files, and <code>eng.traineddata.gz</code>. (If tesseract.js-core's file names differ in the installed version, that's fine — the script copies whatever <code>.js</code>/<code>.wasm</code> files the package ships, which is what the worker's <code>corePath</code> directory lookup expects.)</p>
+
+<ul>
+<li>[ ] <strong>Step 5: Write <code>src/lib/ocr.ts</code></strong></li>
+</ul>
+
+<p>```ts
+import { createWorker, type Worker } from 'tesseract.js';</p>
+
+<p>export interface OcrProgress {
+  label: string;
+  progress: number; // 0..1
+}</p>
+
+<p>export class OcrError extends Error {}</p>
+
+<p>let workerPromise: Promise<Worker> | null = null;
+let currentOnProgress: ((p: OcrProgress) => void) | null = null;</p>
+
+<p>const assetBase = <code>${import.meta.env.BASE_URL}tesseract/</code>;</p>
+
+<p>function getWorker(): Promise<Worker> {
+  workerPromise ??= createWorker('eng', 1, {
+    workerPath: <code>${assetBase}worker.min.js</code>,
+    corePath: assetBase,
+    langPath: assetBase,
+    logger: (m) => {
+      if (m.status === 'recognizing text') {
+        currentOnProgress?.({ label: 'Reading words…', progress: m.progress });
+      }
+    },
+  });
+  return workerPromise;
+}</p>
+
+<p>/** Upscale small screenshots 2x — tesseract accuracy drops on small text. */
+async function toRecognizable(file: File): Promise<File | HTMLCanvasElement> {
+  const bitmap = await createImageBitmap(file);
+  if (Math.min(bitmap.width, bitmap.height) >= 1000) {
+    bitmap.close();
+    return file;
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = bitmap.width * 2;
+  canvas.height = bitmap.height * 2;
+  canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  return canvas;
+}</p>
+
+<p>export async function recognizeImage(
+  file: File,
+  onProgress: (p: OcrProgress) => void,
+): Promise<string> {
+  onProgress({ label: 'Loading OCR engine…', progress: 0 });
+  let worker: Worker;
+  try {
+    worker = await getWorker();
+  } catch (err) {
+    workerPromise = null; // allow retry after a failed load
+    throw new OcrError(<code>OCR engine failed to load: ${String(err)}</code>);
+  }
+  currentOnProgress = onProgress;
+  try {
+    const input = await toRecognizable(file);
+    const { data } = await worker.recognize(input);
+    return data.text;
+  } catch (err) {
+    throw new OcrError(<code>Recognition failed: ${String(err)}</code>);
+  } finally {
+    currentOnProgress = null;
+  }
+}</p>
+
+<p>/** Free the worker's memory when leaving the Add tab. */
+export async function terminateOcr(): Promise<void> {
+  const p = workerPromise;
+  workerPromise = null;
+  if (p) await (await p).terminate();
+}
+```</p>
+
+<p>(If the installed tesseract.js major version has a different <code>createWorker</code> signature, adapt the options object to it — the requirements are: <code>eng</code> language, self-hosted <code>workerPath</code>/<code>corePath</code>/<code>langPath</code> under <code>assetBase</code>, and a logger that surfaces recognition progress.)</p>
+
+<ul>
+<li>[ ] <strong>Step 6: Typecheck, full test run, commit</strong></li>
+</ul>
+
+<p>Run: <code>npm run typecheck &amp;&amp; npm test</code>
+Expected: both pass.</p>
+
+<p><code>bash
+git add -A
+git commit -m "feat: self-hosted tesseract assets script and lazy OCR worker wrapper" -m "Co-Authored-By: Claude Fable 5 &lt;noreply@anthropic.com&gt;"
+</code></p>
+
+<hr />
+
+<h3>Task 10: Add screen — upload → OCR → review → fetch → commit wizard</h3>
+
+<p><strong>Files:</strong>
+- Modify: <code>src/screens/AddScreen.tsx</code> (replace stub)
+- Test: <code>src/screens/__tests__/AddScreen.test.tsx</code></p>
+
+<p><strong>Interfaces:</strong>
+- Consumes: <code>useVocab</code> (<code>db</code>, <code>commitImport</code>), <code>useToast</code>, <code>parseCandidates</code>, <code>recognizeImage</code>/<code>terminateOcr</code>, <code>fetchDefinitions</code>.
+- Produces: nothing new for other tasks.</p>
+
+<ul>
+<li>[ ] <strong>Step 1: Write the failing tests <code>src/screens/__tests__/AddScreen.test.tsx</code></strong></li>
+</ul>
+
+<p>```tsx
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { vi } from 'vitest';
+import App from '../../App';
+import { DB<em>KEY } from '../../lib/storage';
+import { knownWordEntry } from '../../lib/leitner';
+import { SCHEMA</em>VERSION } from '../../lib/types';</p>
+
+<p>vi.mock('../../lib/ocr', () => ({
+  recognizeImage: vi.fn(async () => 'AGARIC NAIAD PANGRAM TIARA'),
+  terminateOcr: vi.fn(async () => {}),
+}));</p>
+
+<p>vi.mock('../../lib/dictionary', () => ({
+  fetchDefinitions: vi.fn(async (words: string[]) =>
+    words.map((word) => ({ word, definition: <code>def of ${word}</code>, source: 'api' as const }))),
+}));</p>
+
+<p>function seedTiaraMastered() {
+  localStorage.setItem(DB<em>KEY, JSON.stringify({
+    schemaVersion: SCHEMA</em>VERSION,
+    words: { TIARA: knownWordEntry('TIARA', 'a crown', 'api', 1) },
+  }));
+}</p>
+
+<p>async function uploadShot() {
+  render(<App />);
+  await userEvent.click(screen.getByRole('button', { name: /^add$/i }));
+  const input = screen.getByLabelText(/upload solution screenshot/i);
+  await userEvent.upload(input, new File(['x'], 'shot.png', { type: 'image/png' }));
+  await screen.findByText('AGARIC');
+}</p>
+
+<p>it('review commits checked words and reset selections', async () => {
+  seedTiaraMastered();
+  await uploadShot();
+  expect(screen.queryByText('PANGRAM')).not.toBeInTheDocument(); // UI junk filtered
+  await userEvent.click(screen.getByRole('checkbox', { name: 'NAIAD' }));  // uncheck OCR junk
+  await userEvent.click(screen.getByRole('checkbox', { name: /TIARA/ })); // reset to learning
+  await userEvent.click(screen.getByRole('button', { name: /add 2 words/i }));
+  await screen.findByRole('status');
+  const stored = JSON.parse(localStorage.getItem(DB_KEY)!);
+  expect(stored.words.AGARIC).toMatchObject({
+    status: 'learning', box: 1, definition: 'def of AGARIC',
+  });
+  expect(stored.words.NAIAD).toBeUndefined();
+  expect(stored.words.TIARA).toMatchObject({ status: 'learning', box: 1, definition: 'a crown' });
+});</p>
+
+<p>it('"already know" imports straight to mastered', async () => {
+  seedTiaraMastered();
+  await uploadShot();
+  await userEvent.click(screen.getByRole('button', { name: /AGARIC: learn/i }));
+  await userEvent.click(screen.getByRole('checkbox', { name: 'NAIAD' }));
+  await userEvent.click(screen.getByRole('button', { name: /add 1 word/i }));
+  await screen.findByRole('status');
+  const stored = JSON.parse(localStorage.getItem(DB_KEY)!);
+  expect(stored.words.AGARIC).toMatchObject({ status: 'mastered', definition: 'def of AGARIC' });
+});
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 2: Run tests to verify they fail</strong></li>
+</ul>
+
+<p>Run: <code>npm test -- src/screens/__tests__/AddScreen.test.tsx</code>
+Expected: FAIL — the stub has no upload input.</p>
+
+<ul>
+<li>[ ] <strong>Step 3: Replace <code>src/screens/AddScreen.tsx</code></strong></li>
+</ul>
+
+<p>```tsx
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useVocab } from '../context/VocabProvider';
+import { useToast } from '../components/Toast';
+import { parseCandidates } from '../lib/parser';
+import { recognizeImage, terminateOcr, type OcrProgress } from '../lib/ocr';
+import { fetchDefinitions, type DefinitionResult } from '../lib/dictionary';
+import type { VocabWord } from '../lib/types';</p>
+
+<p>interface CandidateRow { word: string; checked: boolean; know: boolean }
+interface KnownRow { word: string; reset: boolean; current: VocabWord }</p>
+
+<p>type ReviewPhase = {
+  name: 'review';
+  candidates: CandidateRow[];
+  known: KnownRow[];
+  filteredCount: number;
+};</p>
+
+<p>type Phase =
+  | { name: 'upload' }
+  | { name: 'ocr'; progress: OcrProgress }
+  | ReviewPhase
+  | { name: 'fetching'; done: number; total: number };</p>
+
+<p>export default function AddScreen() {
+  const { db, commitImport } = useVocab();
+  const toast = useToast();
+  const [phase, setPhase] = useState<Phase>({ name: 'upload' });
+  const abortRef = useRef<AbortController | null>(null);</p>
+
+<p>useEffect(() => () => {
+    void terminateOcr();
+    abortRef.current?.abort();
+  }, []);</p>
+
+<p>const handleFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setPhase({ name: 'ocr', progress: { label: 'Loading OCR engine…', progress: 0 } });
+    try {
+      const text = await recognizeImage(file, (progress) => setPhase({ name: 'ocr', progress }));
+      const parsed = parseCandidates(text, new Set(Object.keys(db.words)));
+      setPhase({
+        name: 'review',
+        candidates: parsed.candidates.map((word) => ({ word, checked: true, know: false })),
+        known: parsed.alreadyKnown.map((word) => ({ word, reset: false, current: db.words[word] })),
+        filteredCount: parsed.filteredUi.length,
+      });
+    } catch {
+      toast.show('Could not read that image — try again with a clearer screenshot.');
+      setPhase({ name: 'upload' });
+    }
+  };</p>
+
+<p>const handleCommit = async (review: ReviewPhase) => {
+    const learnWords = review.candidates.filter((c) => c.checked &amp;&amp; !c.know).map((c) => c.word);
+    const knowWords = review.candidates.filter((c) => c.checked &amp;&amp; c.know).map((c) => c.word);
+    const resets = review.known.filter((k) => k.reset).map((k) => k.word);
+    const toFetch = [...learnWords, ...knowWords];</p>
+
+<pre><code>const controller = new AbortController();
+abortRef.current = controller;
+setPhase({ name: 'fetching', done: 0, total: toFetch.length });
+let results: DefinitionResult[];
+try {
+  results = await fetchDefinitions(toFetch, {
+    signal: controller.signal,
+    onProgress: (done, total) =&gt; setPhase({ name: 'fetching', done, total }),
+  });
+} catch {
+  setPhase(review); // cancelled — nothing committed, selections kept
+  return;
+}
+
+const byWord = new Map(results.map((r) =&gt; [r.word, r]));
+const learn = learnWords.map((w) =&gt; byWord.get(w)!);
+const known = knowWords.map((w) =&gt; byWord.get(w)!);
+commitImport({ learn, known, resets });
+
+const missing = results.filter((r) =&gt; r.source === 'none').length;
+const parts = [
+  learn.length &gt; 0 &amp;&amp; `${learn.length} added to learning`,
+  known.length &gt; 0 &amp;&amp; `${known.length} marked known`,
+  resets.length &gt; 0 &amp;&amp; `${resets.length} reset to learning`,
+  missing &gt; 0 &amp;&amp; `${missing} without definitions`,
+].filter(Boolean);
+toast.show(parts.join(', '));
+setPhase({ name: 'upload' });
+</code></pre>
+
+<p>};</p>
+
+<p>if (phase.name === 'upload') {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-4">
+        <label htmlFor="shot" className="mb-2 block text-sm font-semibold text-slate-700">
+          Upload solution screenshot
+        </label>
+        <input
+          id="shot"
+          type="file"
+          accept="image/png,image/jpeg"
+          onChange={handleFile}
+          className="w-full text-sm text-slate-500 file:mr-4 file:rounded-xl file:border-0 file:bg-amber-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-amber-700"
+        />
+        <p className="mt-2 text-xs text-slate-400">
+          Works best with the NYT app's “Yesterday's Answers” page.
+        </p>
+      </div>
+    );
+  }</p>
+
+<p>if (phase.name === 'ocr') {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 text-center">
+        <p className="text-sm font-medium text-amber-600">{phase.progress.label}</p>
+        <div className="mt-3 h-2 w-full overflow-hidden rounded bg-slate-100">
+          <div
+            className="h-full bg-amber-400 transition-all"
+            style={{ width: <code>${Math.round(phase.progress.progress * 100)}%</code> }}
+          />
+        </div>
+      </div>
+    );
+  }</p>
+
+<p>if (phase.name === 'fetching') {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 text-center">
+        <p className="text-sm font-medium text-amber-600">
+          Fetching definitions… {phase.done}/{phase.total}
+        </p>
+        <button
+          onClick={() => abortRef.current?.abort()}
+          className="mt-4 min-h-[44px] rounded-xl bg-slate-200 px-4 py-2 text-sm font-semibold"
+        >
+          Cancel
+        </button>
+      </div>
+    );
+  }</p>
+
+<p>const selectedCount =
+    phase.candidates.filter((c) => c.checked).length +
+    phase.known.filter((k) => k.reset).length;
+  const setCandidate = (word: string, patch: Partial<CandidateRow>) =>
+    setPhase({
+      ...phase,
+      candidates: phase.candidates.map((c) => (c.word === word ? { ...c, ...patch } : c)),
+    });
+  const setKnown = (word: string, reset: boolean) =>
+    setPhase({
+      ...phase,
+      known: phase.known.map((k) => (k.word === word ? { ...k, reset } : k)),
+    });</p>
+
+<p>return (
+    <div className="flex flex-col gap-4">
+      <p className="text-sm text-slate-500">
+        {phase.candidates.length} new · {phase.known.length} already in collection · {phase.filteredCount} filtered as UI text
+      </p></p>
+
+<pre><code>  {phase.candidates.length === 0 &amp;&amp; phase.known.length === 0 ? (
+    &lt;div className="rounded-2xl border border-slate-200 bg-white p-6 text-center text-sm text-slate-600"&gt;
+      Couldn't find words — try a tighter crop of the answers list.
+      &lt;button
+        onClick={() =&gt; setPhase({ name: 'upload' })}
+        className="mt-4 block w-full min-h-[44px] rounded-xl bg-amber-400 py-2 font-semibold"
+      &gt;
+        Try another screenshot
+      &lt;/button&gt;
+    &lt;/div&gt;
+  ) : (
+    &lt;&gt;
+      {phase.candidates.length &gt; 0 &amp;&amp; (
+        &lt;section className="rounded-2xl border border-slate-200 bg-white p-4"&gt;
+          &lt;h2 className="mb-2 text-sm font-bold text-slate-700"&gt;New candidates&lt;/h2&gt;
+          &lt;ul&gt;
+            {phase.candidates.map((c) =&gt; (
+              &lt;li key={c.word} className="flex min-h-[44px] items-center gap-3"&gt;
+                &lt;input
+                  type="checkbox"
+                  id={`cand-${c.word}`}
+                  checked={c.checked}
+                  onChange={(e) =&gt; setCandidate(c.word, { checked: e.target.checked })}
+                  className="h-5 w-5 accent-amber-500"
+                /&gt;
+                &lt;label htmlFor={`cand-${c.word}`} className="flex-1 font-semibold"&gt;
+                  {c.word}
+                &lt;/label&gt;
+                {c.checked &amp;&amp; (
+                  &lt;button
+                    onClick={() =&gt; setCandidate(c.word, { know: !c.know })}
+                    aria-label={`${c.word}: ${c.know ? 'already know' : 'learn'}`}
+                    className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                      c.know ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                    }`}
+                  &gt;
+                    {c.know ? 'Know' : 'Learn'}
+                  &lt;/button&gt;
+                )}
+              &lt;/li&gt;
+            ))}
+          &lt;/ul&gt;
+        &lt;/section&gt;
+      )}
+
+      {phase.known.length &gt; 0 &amp;&amp; (
+        &lt;section className="rounded-2xl border border-slate-200 bg-white p-4"&gt;
+          &lt;h2 className="mb-1 text-sm font-bold text-slate-700"&gt;Already in your collection&lt;/h2&gt;
+          &lt;p className="mb-2 text-xs text-slate-400"&gt;Check a word to reset it to learning (Box 1).&lt;/p&gt;
+          &lt;ul&gt;
+            {phase.known.map((k) =&gt; (
+              &lt;li key={k.word} className="flex min-h-[44px] items-center gap-3"&gt;
+                &lt;input
+                  type="checkbox"
+                  id={`known-${k.word}`}
+                  checked={k.reset}
+                  onChange={(e) =&gt; setKnown(k.word, e.target.checked)}
+                  className="h-5 w-5 accent-amber-500"
+                /&gt;
+                &lt;label htmlFor={`known-${k.word}`} className="flex-1"&gt;
+                  &lt;span className="font-semibold"&gt;{k.word}&lt;/span&gt;{' '}
+                  &lt;span className="text-xs text-slate-400"&gt;
+                    {k.current.status === 'mastered' ? 'mastered' : `Box ${k.current.box}`}
+                  &lt;/span&gt;
+                &lt;/label&gt;
+              &lt;/li&gt;
+            ))}
+          &lt;/ul&gt;
+        &lt;/section&gt;
+      )}
+
+      &lt;div className="grid grid-cols-2 gap-4"&gt;
+        &lt;button
+          onClick={() =&gt; setPhase({ name: 'upload' })}
+          className="min-h-[44px] rounded-xl bg-slate-200 py-3 font-semibold"
+        &gt;
+          Start over
+        &lt;/button&gt;
+        &lt;button
+          onClick={() =&gt; handleCommit(phase)}
+          disabled={selectedCount === 0}
+          className="min-h-[44px] rounded-xl bg-amber-400 py-3 font-semibold disabled:opacity-50"
+        &gt;
+          Add {selectedCount} {selectedCount === 1 ? 'word' : 'words'}
+        &lt;/button&gt;
+      &lt;/div&gt;
+    &lt;/&gt;
+  )}
+&lt;/div&gt;
+</code></pre>
+
+<p>);
+}
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 4: Run tests to verify they pass</strong></li>
+</ul>
+
+<p>Run: <code>npm test</code>
+Expected: PASS — all test files green.</p>
+
+<ul>
+<li>[ ] <strong>Step 5: Typecheck and commit</strong></li>
+</ul>
+
+<p><code>bash
+npm run typecheck
+git add -A
+git commit -m "feat: Add wizard with OCR review, already-know toggle, reset-to-learning, and cancellable fetching" -m "Co-Authored-By: Claude Fable 5 &lt;noreply@anthropic.com&gt;"
+</code></p>
+
+<hr />
+
+<h3>Task 11: Words screen — browse, search, edit, delete, unmaster</h3>
+
+<p><strong>Files:</strong>
+- Modify: <code>src/screens/WordsScreen.tsx</code> (replace stub)
+- Test: <code>src/screens/__tests__/WordsScreen.test.tsx</code></p>
+
+<p><strong>Interfaces:</strong>
+- Consumes: <code>useVocab</code> (<code>db</code>, <code>deleteWord</code>, <code>unmasterWord</code>), <code>DefinitionEditor</code>.
+- Produces: nothing new for other tasks.</p>
+
+<ul>
+<li>[ ] <strong>Step 1: Write the failing tests <code>src/screens/__tests__/WordsScreen.test.tsx</code></strong></li>
+</ul>
+
+<p>```tsx
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import App from '../../App';
+import { DB<em>KEY } from '../../lib/storage';
+import { knownWordEntry, newWordEntry } from '../../lib/leitner';
+import { SCHEMA</em>VERSION } from '../../lib/types';
+import type { VocabWord } from '../../lib/types';</p>
+
+<p>function seed(...words: VocabWord[]) {
+  localStorage.setItem(DB<em>KEY, JSON.stringify({
+    schemaVersion: SCHEMA</em>VERSION,
+    words: Object.fromEntries(words.map((w) => [w.word, w])),
+  }));
+}</p>
+
+<p>async function openWords() {
+  render(<App />);
+  await userEvent.click(screen.getByRole('button', { name: /^words$/i }));
+}</p>
+
+<p>it('searches the word list', async () => {
+  seed(
+    newWordEntry('AGARIC', 'a mushroom', 'api', 1),
+    knownWordEntry('TIARA', 'a crown', 'api', 2),
+  );
+  await openWords();
+  expect(screen.getByText('AGARIC')).toBeInTheDocument();
+  await userEvent.type(screen.getByRole('searchbox'), 'TIA');
+  expect(screen.queryByText('AGARIC')).not.toBeInTheDocument();
+  expect(screen.getByText('TIARA')).toBeInTheDocument();
+});</p>
+
+<p>it('filters by status', async () => {
+  seed(
+    newWordEntry('AGARIC', 'a mushroom', 'api', 1),
+    knownWordEntry('TIARA', 'a crown', 'api', 2),
+  );
+  await openWords();
+  await userEvent.click(screen.getByRole('button', { name: /^mastered$/i }));
+  expect(screen.queryByText('AGARIC')).not.toBeInTheDocument();
+  expect(screen.getByText('TIARA')).toBeInTheDocument();
+});</p>
+
+<p>it('edits a definition from the list', async () => {
+  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  await openWords();
+  await userEvent.click(screen.getByRole('button', { name: /AGARIC/ }));
+  await userEvent.click(screen.getByRole('button', { name: /edit definition/i }));
+  const box = screen.getByRole('textbox', { name: /definition for AGARIC/i });
+  await userEvent.clear(box);
+  await userEvent.type(box, 'a gilled fungus');
+  await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+  expect(JSON.parse(localStorage.getItem(DB_KEY)!).words.AGARIC).toMatchObject({
+    definition: 'a gilled fungus',
+    definitionSource: 'manual',
+  });
+});</p>
+
+<p>it('deletes only after inline confirm', async () => {
+  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  await openWords();
+  await userEvent.click(screen.getByRole('button', { name: /AGARIC/ }));
+  await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+  expect(JSON.parse(localStorage.getItem(DB<em>KEY)!).words.AGARIC).toBeDefined();
+  await userEvent.click(screen.getByRole('button', { name: /really delete/i }));
+  expect(JSON.parse(localStorage.getItem(DB</em>KEY)!).words.AGARIC).toBeUndefined();
+});</p>
+
+<p>it('unmaster returns a word to learning box 3', async () => {
+  seed(knownWordEntry('TIARA', 'a crown', 'api', 1));
+  await openWords();
+  await userEvent.click(screen.getByRole('button', { name: /TIARA/ }));
+  await userEvent.click(screen.getByRole('button', { name: /unmaster/i }));
+  expect(JSON.parse(localStorage.getItem(DB_KEY)!).words.TIARA).toMatchObject({
+    status: 'learning',
+    box: 3,
+  });
+});
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 2: Run tests to verify they fail</strong></li>
+</ul>
+
+<p>Run: <code>npm test -- src/screens/__tests__/WordsScreen.test.tsx</code>
+Expected: FAIL — stub has no search box or rows.</p>
+
+<ul>
+<li>[ ] <strong>Step 3: Replace <code>src/screens/WordsScreen.tsx</code></strong></li>
+</ul>
+
+<p>```tsx
+import { useState } from 'react';
+import { useVocab } from '../context/VocabProvider';
+import { DefinitionEditor } from '../components/DefinitionEditor';</p>
+
+<p>type Filter = 'all' | 'learning' | 'mastered';</p>
+
+<p>export default function WordsScreen() {
+  const { db, deleteWord, unmasterWord } = useVocab();
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<Filter>('all');
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);</p>
+
+<p>const open = (word: string) => {
+    setExpanded(expanded === word ? null : word);
+    setEditing(false);
+    setConfirmingDelete(false);
+  };</p>
+
+<p>const rows = Object.values(db.words)
+    .filter((w) => filter === 'all' || w.status === filter)
+    .filter((w) => w.word.includes(query.trim().toUpperCase()))
+    .sort((a, b) => a.word.localeCompare(b.word));</p>
+
+<p>return (
+    <div className="flex flex-col gap-3">
+      <input
+        type="search"
+        aria-label="Search words"
+        placeholder="Search…"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        className="min-h-[44px] rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+      />
+      <div className="flex gap-2">
+        {(['all', 'learning', 'mastered'] as const).map((f) => (
+          <button
+            key={f}
+            onClick={() => setFilter(f)}
+            aria-pressed={filter === f}
+            className={<code>min-h-[44px] rounded-full px-3 py-1 text-xs font-semibold capitalize ${
+              filter === f ? 'bg-amber-400 text-slate-900' : 'bg-slate-200 text-slate-600'
+            }</code>}
+          >
+            {f}
+          </button>
+        ))}
+      </div></p>
+
+<pre><code>  {rows.length === 0 &amp;&amp; (
+    &lt;p className="py-8 text-center text-sm text-slate-400"&gt;No words here yet.&lt;/p&gt;
+  )}
+
+  &lt;ul className="flex flex-col gap-2"&gt;
+    {rows.map((w) =&gt; (
+      &lt;li key={w.word} className="rounded-2xl border border-slate-200 bg-white"&gt;
+        &lt;button
+          onClick={() =&gt; open(w.word)}
+          className="flex min-h-[44px] w-full items-center gap-3 px-4 py-2 text-left"
+        &gt;
+          &lt;span className="flex-1 font-semibold"&gt;{w.word}&lt;/span&gt;
+          &lt;span
+            className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+              w.status === 'mastered'
+                ? 'bg-emerald-100 text-emerald-700'
+                : 'bg-amber-100 text-amber-700'
+            }`}
+          &gt;
+            {w.status === 'mastered' ? 'Mastered' : `Box ${w.box}`}
+          &lt;/span&gt;
+        &lt;/button&gt;
+        {expanded !== w.word ? (
+          &lt;p className="truncate px-4 pb-3 text-xs text-slate-400"&gt;{w.definition}&lt;/p&gt;
+        ) : (
+          &lt;div className="flex flex-col gap-3 px-4 pb-4"&gt;
+            {editing ? (
+              &lt;DefinitionEditor word={w.word} initial={w.definition} onDone={() =&gt; setEditing(false)} /&gt;
+            ) : (
+              &lt;p className="text-sm text-slate-700"&gt;{w.definition}&lt;/p&gt;
+            )}
+            &lt;p className="text-xs text-slate-400"&gt;{w.lapses} lapses&lt;/p&gt;
+            {!editing &amp;&amp; (
+              &lt;div className="flex flex-wrap gap-2"&gt;
+                &lt;button
+                  onClick={() =&gt; setEditing(true)}
+                  className="min-h-[44px] rounded-xl bg-slate-200 px-3 py-2 text-xs font-semibold"
+                &gt;
+                  Edit definition
+                &lt;/button&gt;
+                {w.status === 'mastered' &amp;&amp; (
+                  &lt;button
+                    onClick={() =&gt; unmasterWord(w.word)}
+                    className="min-h-[44px] rounded-xl bg-slate-200 px-3 py-2 text-xs font-semibold"
+                  &gt;
+                    Unmaster
+                  &lt;/button&gt;
+                )}
+                {confirmingDelete ? (
+                  &lt;button
+                    onClick={() =&gt; deleteWord(w.word)}
+                    className="min-h-[44px] rounded-xl bg-red-500 px-3 py-2 text-xs font-semibold text-white"
+                  &gt;
+                    Really delete?
+                  &lt;/button&gt;
+                ) : (
+                  &lt;button
+                    onClick={() =&gt; setConfirmingDelete(true)}
+                    className="min-h-[44px] rounded-xl bg-red-100 px-3 py-2 text-xs font-semibold text-red-700"
+                  &gt;
+                    Delete
+                  &lt;/button&gt;
+                )}
+              &lt;/div&gt;
+            )}
+          &lt;/div&gt;
+        )}
+      &lt;/li&gt;
+    ))}
+  &lt;/ul&gt;
+&lt;/div&gt;
+</code></pre>
+
+<p>);
+}
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 4: Run tests to verify they pass</strong></li>
+</ul>
+
+<p>Run: <code>npm test</code>
+Expected: PASS.</p>
+
+<ul>
+<li>[ ] <strong>Step 5: Typecheck and commit</strong></li>
+</ul>
+
+<p><code>bash
+npm run typecheck
+git add -A
+git commit -m "feat: Words screen with search, status filter, edit, inline-confirm delete, unmaster" -m "Co-Authored-By: Claude Fable 5 &lt;noreply@anthropic.com&gt;"
+</code></p>
+
+<hr />
+
+<h3>Task 12: Data screen — stats, export, import with preview, reset</h3>
+
+<p><strong>Files:</strong>
+- Modify: <code>src/screens/DataScreen.tsx</code> (replace stub)
+- Test: <code>src/screens/__tests__/DataScreen.test.tsx</code></p>
+
+<p><strong>Interfaces:</strong>
+- Consumes: <code>useVocab</code> (<code>db</code>, <code>importBackup</code>, <code>resetDb</code>), <code>useToast</code>, <code>storage.ts</code> (<code>exportDb</code>, <code>parseBackup</code>, <code>mergeDb</code>).
+- Produces: nothing new for other tasks.</p>
+
+<ul>
+<li>[ ] <strong>Step 1: Write the failing tests <code>src/screens/__tests__/DataScreen.test.tsx</code></strong></li>
+</ul>
+
+<p>```tsx
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import App from '../../App';
+import { DB<em>KEY } from '../../lib/storage';
+import { newWordEntry } from '../../lib/leitner';
+import { SCHEMA</em>VERSION } from '../../lib/types';
+import type { VocabWord } from '../../lib/types';</p>
+
+<p>function seed(...words: VocabWord[]) {
+  localStorage.setItem(DB<em>KEY, JSON.stringify({
+    schemaVersion: SCHEMA</em>VERSION,
+    words: Object.fromEntries(words.map((w) => [w.word, w])),
+  }));
+}</p>
+
+<p>async function openData() {
+  render(<App />);
+  await userEvent.click(screen.getByRole('button', { name: /^data$/i }));
+}</p>
+
+<p>it('rejects an invalid backup file', async () => {
+  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  await openData();
+  const bad = new File(['{"nope":true}'], 'bad.json', { type: 'application/json' });
+  await userEvent.upload(screen.getByLabelText(/import backup/i), bad);
+  expect(await screen.findByRole('status')).toHaveTextContent(/not a valid/i);
+  expect(JSON.parse(localStorage.getItem(DB_KEY)!).words.AGARIC).toBeDefined();
+});</p>
+
+<p>it('previews and applies a backup merge', async () => {
+  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  await openData();
+  const backup = {
+    schemaVersion: SCHEMA<em>VERSION,
+    words: { TIARA: newWordEntry('TIARA', 'a crown', 'api', 2) },
+  };
+  const file = new File([JSON.stringify(backup)], 'backup.json', { type: 'application/json' });
+  await userEvent.upload(screen.getByLabelText(/import backup/i), file);
+  expect(await screen.findByText(/1 new, 0 already present/i)).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: /confirm import/i }));
+  const stored = JSON.parse(localStorage.getItem(DB</em>KEY)!);
+  expect(stored.words.TIARA).toBeDefined();
+  expect(stored.words.AGARIC).toBeDefined();
+});</p>
+
+<p>it('reset requires typing DELETE', async () => {
+  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  await openData();
+  const btn = screen.getByRole('button', { name: /reset everything/i });
+  expect(btn).toBeDisabled();
+  await userEvent.type(screen.getByLabelText(/type delete/i), 'DELETE');
+  expect(btn).toBeEnabled();
+  await userEvent.click(btn);
+  expect(JSON.parse(localStorage.getItem(DB_KEY)!).words).toEqual({});
+});
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 2: Run tests to verify they fail</strong></li>
+</ul>
+
+<p>Run: <code>npm test -- src/screens/__tests__/DataScreen.test.tsx</code>
+Expected: FAIL — stub has no import input.</p>
+
+<ul>
+<li>[ ] <strong>Step 3: Replace <code>src/screens/DataScreen.tsx</code></strong></li>
+</ul>
+
+<p>```tsx
+import { useState, type ChangeEvent } from 'react';
+import { useVocab } from '../context/VocabProvider';
+import { useToast } from '../components/Toast';
+import { exportDb, mergeDb, parseBackup } from '../lib/storage';
+import type { VocabDb } from '../lib/types';</p>
+
+<p>export default function DataScreen() {
+  const { db, importBackup, resetDb } = useVocab();
+  const toast = useToast();
+  const [preview, setPreview] = useState&lt;{ incoming: VocabDb; added: number; existing: number } | null>(null);
+  const [confirmText, setConfirmText] = useState('');</p>
+
+<p>const all = Object.values(db.words);
+  const learning = all.filter((w) => w.status === 'learning');
+  const perBox = (b: number) => learning.filter((w) => w.box === b).length;
+  const lapses = all.reduce((n, w) => n + w.lapses, 0);</p>
+
+<p>const handleExport = () => {
+    const blob = new Blob([exportDb(db)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = <code>beevocab-backup-${new Date().toISOString().slice(0, 10)}.json</code>;
+    a.click();
+    URL.revokeObjectURL(url);
+  };</p>
+
+<p>const handleImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const incoming = parseBackup(await file.text());
+    if (!incoming) {
+      toast.show('Not a valid BeeVocab backup file.');
+      return;
+    }
+    const { added, existing } = mergeDb(db, incoming);
+    setPreview({ incoming, added, existing });
+  };</p>
+
+<p>const applyImport = () => {
+    if (!preview) return;
+    importBackup(preview.incoming);
+    toast.show(<code>Imported: ${preview.added} new, ${preview.existing} merged.</code>);
+    setPreview(null);
+  };</p>
+
+<p>return (
+    <div className="flex flex-col gap-4">
+      <section className="rounded-2xl border border-slate-200 bg-white p-4">
+        <h2 className="mb-3 text-sm font-bold text-slate-700">Stats</h2>
+        <div className="grid grid-cols-3 gap-2 text-center">
+          <div><p className="text-xl font-black text-amber-500">{learning.length}</p><p className="text-[10px] font-bold uppercase text-slate-400">Learning</p></div>
+          <div><p className="text-xl font-black text-emerald-500">{all.length - learning.length}</p><p className="text-[10px] font-bold uppercase text-slate-400">Mastered</p></div>
+          <div><p className="text-xl font-black text-slate-500">{lapses}</p><p className="text-[10px] font-bold uppercase text-slate-400">Lapses</p></div>
+        </div>
+        <p className="mt-3 text-center text-xs text-slate-400">
+          Box 1: {perBox(1)} · Box 2: {perBox(2)} · Box 3: {perBox(3)}
+        </p>
+      </section></p>
+
+<pre><code>  &lt;section className="rounded-2xl border border-slate-200 bg-white p-4"&gt;
+    &lt;h2 className="mb-2 text-sm font-bold text-slate-700"&gt;Backup&lt;/h2&gt;
+    &lt;p className="mb-3 text-xs text-slate-400"&gt;
+      The backup file contains your full progress. Import it on a new device to resume exactly where you left off.
+    &lt;/p&gt;
+    &lt;button
+      onClick={handleExport}
+      className="mb-3 w-full min-h-[44px] rounded-xl bg-amber-400 py-2 font-semibold"
+    &gt;
+      Export backup
+    &lt;/button&gt;
+    &lt;label htmlFor="import" className="mb-1 block text-xs font-semibold text-slate-600"&gt;
+      Import backup
+    &lt;/label&gt;
+    &lt;input
+      id="import"
+      type="file"
+      accept="application/json,.json"
+      onChange={handleImportFile}
+      className="w-full text-sm text-slate-500 file:mr-4 file:rounded-xl file:border-0 file:bg-slate-100 file:px-4 file:py-2 file:text-sm file:font-semibold"
+    /&gt;
+    {preview &amp;&amp; (
+      &lt;div className="mt-3 rounded-xl bg-slate-50 p-3 text-sm"&gt;
+        &lt;p&gt;
+          Backup contains {Object.keys(preview.incoming.words).length} words; {preview.added} new, {preview.existing} already present.
+        &lt;/p&gt;
+        &lt;div className="mt-2 flex gap-2"&gt;
+          &lt;button
+            onClick={() =&gt; setPreview(null)}
+            className="min-h-[44px] flex-1 rounded-xl bg-slate-200 py-2 text-sm font-semibold"
+          &gt;
+            Cancel
+          &lt;/button&gt;
+          &lt;button
+            onClick={applyImport}
+            className="min-h-[44px] flex-1 rounded-xl bg-amber-400 py-2 text-sm font-semibold"
+          &gt;
+            Confirm import
+          &lt;/button&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+    )}
+  &lt;/section&gt;
+
+  &lt;section className="rounded-2xl border border-red-200 bg-white p-4"&gt;
+    &lt;h2 className="mb-2 text-sm font-bold text-red-700"&gt;Danger zone&lt;/h2&gt;
+    &lt;label htmlFor="reset-confirm" className="mb-1 block text-xs text-slate-500"&gt;
+      Type DELETE to confirm
+    &lt;/label&gt;
+    &lt;input
+      id="reset-confirm"
+      value={confirmText}
+      onChange={(e) =&gt; setConfirmText(e.target.value)}
+      className="mb-2 w-full min-h-[44px] rounded-xl border border-slate-300 px-3 py-2 text-sm"
+    /&gt;
+    &lt;button
+      disabled={confirmText !== 'DELETE'}
+      onClick={() =&gt; {
+        resetDb();
+        setConfirmText('');
+        toast.show('All data deleted.');
+      }}
+      className="w-full min-h-[44px] rounded-xl bg-red-500 py-2 font-semibold text-white disabled:opacity-40"
+    &gt;
+      Reset everything
+    &lt;/button&gt;
+  &lt;/section&gt;
+&lt;/div&gt;
+</code></pre>
+
+<p>);
+}
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 4: Run tests to verify they pass</strong></li>
+</ul>
+
+<p>Run: <code>npm test</code>
+Expected: PASS.</p>
+
+<ul>
+<li>[ ] <strong>Step 5: Typecheck and commit</strong></li>
+</ul>
+
+<p><code>bash
+npm run typecheck
+git add -A
+git commit -m "feat: Data screen with stats, export/import backup with merge preview, guarded reset" -m "Co-Authored-By: Claude Fable 5 &lt;noreply@anthropic.com&gt;"
+</code></p>
+
+<hr />
+
+<h3>Task 13: PWA — manifest, icons, precache (incl. tesseract), README</h3>
+
+<p><strong>Files:</strong>
+- Create: <code>assets/icon.svg</code>, <code>assets/icon-maskable.svg</code>, <code>scripts/generate-icons.mjs</code>, <code>public/icons/</code> (generated PNGs, committed), <code>README.md</code>
+- Modify: <code>vite.config.ts</code>, <code>src/main.tsx</code>, <code>tsconfig.json</code>, <code>.github/workflows/deploy.yml</code>, <code>package.json</code></p>
+
+<p><strong>Interfaces:</strong>
+- Consumes: the built app; <code>public/tesseract/</code> assets from Task 9.
+- Produces: installable offline-capable PWA; <code>dist/manifest.webmanifest</code> + <code>dist/sw.js</code> on build.</p>
+
+<ul>
+<li>[ ] <strong>Step 1: Install dependencies</strong></li>
+</ul>
+
+<p>Run: <code>npm install -D vite-plugin-pwa sharp</code>
+Expected: exit 0.</p>
+
+<ul>
+<li>[ ] <strong>Step 2: Write <code>assets/icon.svg</code></strong></li>
+</ul>
+
+<p><code>svg
+&lt;svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"&gt;
+  &lt;rect width="512" height="512" rx="96" fill="#f59e0b"/&gt;
+  &lt;polygon points="256,80 408,168 408,344 256,432 104,344 104,168" fill="#1e293b"/&gt;
+  &lt;text x="256" y="318" font-family="Arial, Helvetica, sans-serif" font-size="180" font-weight="bold" fill="#fbbf24" text-anchor="middle"&gt;B&lt;/text&gt;
+&lt;/svg&gt;
+</code></p>
+
+<ul>
+<li>[ ] <strong>Step 3: Write <code>assets/icon-maskable.svg</code></strong> (full-bleed background, artwork inside the 80% safe zone)</li>
+</ul>
+
+<p><code>svg
+&lt;svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"&gt;
+  &lt;rect width="512" height="512" fill="#f59e0b"/&gt;
+  &lt;polygon points="256,116 376,186 376,326 256,396 136,326 136,186" fill="#1e293b"/&gt;
+  &lt;text x="256" y="305" font-family="Arial, Helvetica, sans-serif" font-size="140" font-weight="bold" fill="#fbbf24" text-anchor="middle"&gt;B&lt;/text&gt;
+&lt;/svg&gt;
+</code></p>
+
+<ul>
+<li>[ ] <strong>Step 4: Write <code>scripts/generate-icons.mjs</code></strong></li>
+</ul>
+
+<p>```js
+import sharp from 'sharp';
+import { mkdir } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';</p>
+
+<p>const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+const outDir = path.join(root, 'public', 'icons');
+await mkdir(outDir, { recursive: true });</p>
+
+<p>const jobs = [
+  ['icon.svg', 'icon-192.png', 192],
+  ['icon.svg', 'icon-512.png', 512],
+  ['icon-maskable.svg', 'icon-maskable-512.png', 512],
+];
+for (const [src, out, size] of jobs) {
+  await sharp(path.join(root, 'assets', src)).resize(size, size).png().toFile(path.join(outDir, out));
+  console.log(out);
+}
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 5: Generate the icons</strong></li>
+</ul>
+
+<p>Add to <code>package.json</code> <code>"scripts"</code>:
+<code>json
+    "icons": "node scripts/generate-icons.mjs"
+</code>
+Run: <code>npm run icons &amp;&amp; ls public/icons/</code>
+Expected: <code>icon-192.png</code>, <code>icon-512.png</code>, <code>icon-maskable-512.png</code>. These PNGs get committed (they are app source, unlike the gitignored tesseract blobs).</p>
+
+<ul>
+<li>[ ] <strong>Step 6: Add VitePWA to <code>vite.config.ts</code></strong> (replace full file)</li>
+</ul>
+
+<p>```ts
+/// <reference types="vitest/config" />
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
+import { VitePWA } from 'vite-plugin-pwa';</p>
+
+<p>export default defineConfig({
+  base: '/SpellingBeeVocab/',
+  plugins: [
+    react(),
+    tailwindcss(),
+    VitePWA({
+      registerType: 'autoUpdate',
+      includeAssets: ['icons/<em>.png'],
+      manifest: {
+        name: 'Bee Vocab Builder',
+        short_name: 'BeeVocab',
+        description: 'Turn NYT Spelling Bee answer screenshots into flashcards.',
+        start_url: '/SpellingBeeVocab/',
+        scope: '/SpellingBeeVocab/',
+        display: 'standalone',
+        orientation: 'portrait',
+        background_color: '#faf8f5',
+        theme_color: '#f59e0b',
+        icons: [
+          { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+          { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+          { src: 'icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+        ],
+      },
+      workbox: {
+        // Precache the whole shell INCLUDING the self-hosted tesseract worker/WASM/
+        // traineddata so OCR works fully offline after first load (~15 MB total).
+        globPatterns: ['</em><em>/</em>.{js,css,html,png,svg,wasm,gz}'],
+        maximumFileSizeToCacheInBytes: 30 * 1024 * 1024,
+      },
+    }),
+  ],
+  test: {
+    environment: 'jsdom',
+    setupFiles: './src/test-setup.ts',
+    globals: true,
+  },
+});
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 7: Register the service worker in <code>src/main.tsx</code></strong> (replace full file)</li>
+</ul>
+
+<p>```tsx
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { registerSW } from 'virtual:pwa-register';
+import App from './App';
+import './index.css';</p>
+
+<p>registerSW();</p>
+
+<p>createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);
+```</p>
+
+<ul>
+<li>[ ] <strong>Step 8: Add the PWA client types to <code>tsconfig.json</code></strong></li>
+</ul>
+
+<p>Change the <code>"types"</code> entry to:
+<code>json
+    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom", "vite-plugin-pwa/client"]
+</code></p>
+
+<ul>
+<li>[ ] <strong>Step 9: Add the tesseract setup step to <code>.github/workflows/deploy.yml</code></strong></li>
+</ul>
+
+<p>Insert between <code>npm ci</code> and <code>npm run build</code>:
+<code>yaml
+      - run: npm run setup:tesseract
+</code></p>
+
+<ul>
+<li>[ ] <strong>Step 10: Verify the production build precaches everything</strong></li>
+</ul>
+
+<p>Run: <code>npm run setup:tesseract &amp;&amp; npm test &amp;&amp; npm run build &amp;&amp; ls dist/</code>
+Expected: tests pass; <code>dist/</code> contains <code>sw.js</code>, <code>manifest.webmanifest</code>, <code>icons/</code>, and <code>tesseract/</code> (with <code>eng.traineddata.gz</code>).
+Check: <code>grep -c 'tesseract' dist/sw.js</code> prints ≥ 1 (tesseract assets are in the precache manifest).</p>
+
+<ul>
+<li>[ ] <strong>Step 11: Write <code>README.md</code></strong></li>
+</ul>
+
+<p>````markdown</p>
+
+<h1>🐝 Bee Vocab Builder</h1>
+
+<p>Offline-first PWA that turns NYT Spelling Bee answer screenshots into
+Leitner-box flashcards. All data stays on-device; no backend.</p>
+
+<p>Design spec: <code>docs/superpowers/specs/2026-07-12-spelling-bee-pwa-design.md</code></p>
+
+<h2>Development</h2>
+
+<p><code>bash
+npm install
+npm run setup:tesseract   # one-time: self-host OCR assets (~15 MB, gitignored)
+npm run dev               # http://localhost:5173/SpellingBeeVocab/
+</code></p>
+
+<ul>
+<li><code>npm test</code> — unit + component tests (Vitest, jsdom)</li>
+<li><code>npm run typecheck</code> — strict TypeScript</li>
+<li><code>npm run build</code> / <code>npm run preview</code> — production build with service worker</li>
+</ul>
+
+<h2>Deploying to GitHub Pages</h2>
+
+<ol>
+<li>Push this repo to GitHub as <code>SpellingBeeVocab</code> (the name must match the
+Vite <code>base</code> path in <code>vite.config.ts</code>).</li>
+<li>In repo Settings → Pages, set <strong>Source: GitHub Actions</strong>.</li>
+<li>Push to <code>main</code> — <code>.github/workflows/deploy.yml</code> builds and publishes to
+<code>https://&lt;user&gt;.github.io/SpellingBeeVocab/</code>.</li>
+</ol>
+
+<h2>Manual smoke checklist (phone)</h2>
+
+<ul>
+<li>[ ] Open the deployed URL in Chrome on Android; install to home screen;
+  app launches standalone (no address bar), portrait.</li>
+<li>[ ] Upload a real "Yesterday's Answers" screenshot; review list shows the
+  answer words; junk is uncheckable; definitions fetch with progress.</li>
+<li>[ ] Study a few cards: flip, Got it, Missed; counts update.</li>
+<li>[ ] Airplane mode: relaunch the app; Study works; uploading a screenshot
+  still OCRs (definitions fall back to the editable placeholder).</li>
+<li><p>[ ] Data tab: export a backup; reset everything; import the backup;
+  progress is fully restored.
+````</p></li>
+<li><p>[ ] <strong>Step 12: Final full verification and commit</strong></p></li>
+</ul>
+
+<p>Run: <code>npm run typecheck &amp;&amp; npm test &amp;&amp; npm run build</code>
+Expected: everything green.</p>
+
+<p><code>bash
+git add -A
+git commit -m "feat: installable offline PWA with precached OCR assets, icons, and README" -m "Co-Authored-By: Claude Fable 5 &lt;noreply@anthropic.com&gt;"
+</code></p>
+
+<ul>
+<li>[ ] <strong>Step 13: Manual verification in a real browser</strong></li>
+</ul>
+
+<p>Run: <code>npm run preview</code> and open <code>http://localhost:4173/SpellingBeeVocab/</code> in a desktop browser.
+Verify: app loads; DevTools → Application shows the manifest and an activated service worker; upload any screenshot image and confirm the OCR pipeline runs end-to-end (progress bar → review list). Then run the phone smoke checklist from the README after the first real deploy.</p>
+
+<hr />
+
+<h2>Spec coverage map (self-review)</h2>
+
+<p>| Spec section | Task(s) |
+|---|---|
+| §2 Stack, base path | 1, 2 |
+| §3 Architecture / module layout | 3–12 |
+| §4 Data model, corrupt quarantine, legacy migration | 3, 5, 7 |
+| §5 Leitner scheduling, 4 AM boundary | 3 |
+| §6.1 Study screen | 8 |
+| §6.2 Add wizard (review, already-know, resets, cancel, zero-candidates) | 10 |
+| §6.3 Words screen (edit/delete/unmaster) | 11 |
+| §6.4 Data screen (stats, export, import preview/merge, reset) | 12 |
+| §7 OCR pipeline (upscale, blocklist, parse) | 4, 9 |
+| §8 Definition fetching (gap, 429 retry, placeholder) | 6 |
+| §9 PWA (manifest, precache incl. tesseract, autoUpdate) | 13 |
+| §10 Error handling (toasts, quota, corrupt, invalid import) | 5, 7, 10, 12 |
+| §11 Testing + CI + smoke checklist | 2–12, 13 (README) |
+| §12 P2 backlog | intentionally not planned |
+| §13 Milestones | tasks follow the same order |</p>
+
+</body>
+</html>

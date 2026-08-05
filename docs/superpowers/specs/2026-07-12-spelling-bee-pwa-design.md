@@ -1,8 +1,15 @@
 # Bee Vocab Builder — Full Design Spec
 
-**Date:** 2026-07-12
-**Status:** Approved design, ready for implementation planning
+**Date:** 2026-07-12 (originally); kept in sync with the shipped app — last reviewed 2026-07-27
+**Status:** Implemented (v1) and actively extended; this document tracks current behavior, not just the original v1 plan
 **Supersedes:** `spelling-bee-pwa-plan.md` (original draft; kept for reference)
+
+> **Note on `docs/superpowers/plans/2026-07-12-bee-vocab-builder.md`:** that file is a
+> historical, already-executed TDD build script for the original v1 implementation
+> (Tasks 1–13). It is not updated task-by-task as the app evolves — this spec is the
+> living source of truth for current behavior; the plan is kept only as a record of
+> how v1 was originally built. Sections below marked with dates past 2026-07-12
+> describe behavior added after that plan was executed.
 
 ## 1. Overview
 
@@ -60,10 +67,10 @@ src/
   lib/
     types.ts        # VocabWord, VocabDb, schema types
     leitner.ts      # pure scheduling: promote, demote, dueWords, session order
-    parser.ts       # OCR text -> candidate words (regex, blocklist, dedupe)
-    dictionary.ts   # sequential definition fetching w/ backoff
+    parser.ts       # OCR text -> hive letters + classified words (§7.2)
+    dictionary.ts   # sequential definition fetching w/ backoff + alternates (§8)
     storage.ts      # load/save/migrate localStorage envelope, export/import merge
-    ocr.ts          # tesseract worker wrapper (image -> raw text + progress)
+    ocr.ts          # tesseract worker wrapper (image -> 3 OCR passes + progress, §7.1)
   components/       # shared UI: Card, TabBar, Toast, ProgressBar, ...
   screens/
     StudyScreen.tsx
@@ -136,7 +143,8 @@ draft template.)
   different days, and a word due "tomorrow" becomes due at 4 AM. Helper:
   `nextDayBoundary(now, days): number`.
 - **Session:** `dueWords(db, now)` = learning words with `dueAt <= now`, ordered by
-  box ascending (box 1 first), then `dueAt` ascending. The Study screen consumes
+  box descending (box 3 first, closest to Mastered), then `dueAt` ascending — so a
+  backlog banks graduations before fresh box-1 words. The Study screen consumes
   this list one word at a time; grading a word immediately persists and recomputes.
 - `nextDueAt(db, now)`: earliest future `dueAt` among learning words, for the
   empty-state message ("Next review in 5h" / "tomorrow").
@@ -155,20 +163,33 @@ confirm pattern for destructive actions.
 - Card: front = word, large and centered, with box badge ("Box 2"); tap to flip;
   back = definition (and "tap to edit" affordance opening the same definition
   editor used in Words).
-- Buttons: **Missed** (neutral style) and **Got it** (amber, primary). Grading
-  advances to the next due word and resets the card to front side.
+- Buttons (three, equal width): **Missed** (neutral), **Skip** (outline/tertiary),
+  **Got it** (amber, primary). Grading advances to the next due word and resets
+  the card to front side.
+- **Skip** *(added 2026-07-27)*: defers the current card behind the rest of
+  today's due queue without touching its `box`, `dueAt`, or `lapses` — it never
+  costs a review the way "Missed" does, it just means "show me this one again in
+  a bit." Implemented as session-local component state (an ordered list of
+  skipped words layered on top of `dueWords()`'s output, not persisted to the
+  db), so it resets if you leave the Study tab. Skipping the same card again
+  pushes it further back rather than no-op'ing. Disabled when only one word is
+  due, since there'd be nothing to defer behind.
 - Empty state (nothing due): 🎉 "All caught up", the next-due time from
   `nextDueAt`, and a shortcut to the Add tab.
 
 ### 6.2 Add (wizard, 3 steps in one screen)
 
-1. **Upload:** file input, `accept="image/*"` (`capture` omitted so the photo
-   library is the default on Android). On selection, run OCR with a progress bar
-   fed by tesseract's progress callbacks ("Loading OCR engine… / Recognizing…").
-2. **Review:** a puzzle-letters banner first, then two sections, alphabetized,
-   with a sub-line of counts ("12 new · 3 already in collection · 5 filtered
-   out"). If zero new candidates, show guidance ("Couldn't find words — try a
-   tighter crop of the answers list").
+1. **Upload:** file input, `accept="image/png,image/jpeg"`, **`multiple`**
+   *(added 2026-07-26)* — a long answer list that didn't fit one screenshot can
+   be selected as several files at once. Each file is OCR'd in turn (progress
+   label includes "screenshot N of M" when there's more than one), and all
+   their `text`/`boostedText`/`hiveText` are concatenated (newline-joined, in
+   selection order) before a **single** `parseCandidates` call — see §7 for why
+   this makes hive detection more reliable, not less, with more pages.
+2. **Review:** a puzzle-letters banner first, then up to four sections, with a
+   sub-line of counts ("12 new · 3 already in collection · 2 uncertain · 5
+   filtered out"). If there's nothing in any section, show guidance ("Couldn't
+   find words — try a tighter crop of the answers list").
    - **Puzzle-letters banner:** if `parseCandidates`'s `hive` came back
      non-null, show the 7 detected letters (center letter visually
      highlighted) with a note that new candidates below are limited to them —
@@ -181,10 +202,25 @@ confirm pattern for destructive actions.
      **Learn**; switching to **Already know** imports it directly as
      `mastered` — it joins the collection and stats and won't reappear as a
      candidate, but is never shown as a flashcard.
+     **Pangrams first** *(added 2026-07-26)*: words using all 7 hive letters
+     are listed first under a small "Uses all 7 letters" divider, then the
+     rest under "Other words" (each group still alphabetized) — mirrors the
+     NYT page's own bolded-pangrams-on-top convention instead of one flat
+     alphabetical list. Same grouping applied to **Already in your
+     collection** below, for consistency.
    - **Already in your collection:** words the OCR found that are already in the
      database, listed with their current status/box badge, **unchecked by
      default** (unchecked = no change). Checking one resets it to learning,
      box 1, due now (its definition and `lapses` are kept; no re-fetch).
+   - **Uncertain OCR readings** *(added 2026-07-27)*: entries from
+     `parseCandidates`'s `corrections` list — words only recognized after
+     correcting a likely OCR misread (see §7). Shows the **raw** OCR spelling
+     (e.g. "LOTA") with a note that it was read as the corrected word already
+     listed above ("IOTA"), **unchecked by default**. This is a sanity-check
+     surface, not a second candidate: if the guessed correction looks wrong,
+     checking the row lets the user add the raw spelling as its own word
+     instead (with its own Learn/Know toggle), rather than silently trusting
+     either the correction or the raw OCR text.
 3. **Commit:** button "Add N words". Definitions are fetched sequentially with a
    per-word progress line ("Fetching definitions… 7/12") for all newly imported
    words — including "Already know" ones, so the Words browser still shows their
@@ -199,9 +235,10 @@ confirm pattern for destructive actions.
 - Search box (substring match on word), filter chips: All / Learning / Mastered.
 - Each row: word, box/mastered badge, first line of definition, lapses count.
 - Tapping a row expands it: full definition, **Edit definition** (textarea →
-  save sets `definitionSource: 'manual'`), **Delete** (inline confirm), and for
-  mastered words an **Unmaster** action (back to learning, box 3, due now) in
-  case something was graduated prematurely.
+  save sets `definitionSource: 'manual'`; see §8 for the alternate-definition
+  picker and Google lookup link available inside that editor), **Delete**
+  (inline confirm), and for mastered words an **Unmaster** action (back to
+  learning, box 3, due now) in case something was graduated prematurely.
 
 ### 6.4 Data
 
@@ -231,52 +268,154 @@ confirm pattern for destructive actions.
 **Input assumption (per user):** screenshots of the NYT app's word-list/reveal
 screen — dark serif answer words in two columns, with the 7 hive letters (center
 letter first, distinct gold color) shown as a heading above the list, and
-whatever nav chrome/rank-dialog text happened to be on screen above that.
+whatever nav chrome/rank-dialog text happened to be on screen above that. Word
+casing in the raw screenshot is consistently title-case: capital first letter,
+lowercase after (this becomes load-bearing for OCR correction below). A long
+answer list may span multiple screenshots — only the first typically has the
+hive-letters row; later ones are just more answer words, possibly overlapping
+words already seen on an earlier page (§6.2's multi-file upload).
 
-- **`ocr.ts`:** `createWorker('eng')` on demand (lazy — never at app startup),
-  reused across uploads within a session, terminated on tab switch away from Add.
-  Recognizes at the screenshot's native resolution — an earlier version upscaled
-  anything under 1000px on the assumption that small text hurts tesseract's
-  accuracy, but real screenshots (~768px wide is a typical *common* phone
-  screenshot width, not an edge case) showed upscaling actively destroys the hive
-  row's low-contrast gold glyph under every interpolation kernel tried, with no
-  measurable benefit elsewhere; removed once verified against real screenshots.
-  Runs OCR **twice** per upload: pass 1 over the untouched image (used for hive
-  detection and the primary word list), pass 2 over a grayscale +
-  contrast-stretched + hard-thresholded copy (`boostContrast()`) that recovers
-  faint/low-contrast text — e.g. a word rendered mid-fade-in right as the user
-  found it — that pass 1 misses. The same threshold that recovers faint text
-  also wipes out the hive row's gold letter, which is why pass 2 is always
-  additive, never a replacement for pass 1. Progress callback surfaces both
-  passes across a 0–50% / 50–100% split. Errors reject with a typed `OcrError`.
-- **`parser.ts`:** `parseCandidates(rawText, existingWords: Set<string>, boostedText?: string)`
-  returns `{ candidates, alreadyKnown, filteredUi, filteredInvalidLetters, hive }`
-  (the Add screen joins `alreadyKnown` against the db for status badges, sums
-  `filteredUi.length + filteredInvalidLetters.length` for the review screen's
-  "N filtered out" count, and renders `hive` as the puzzle-letters banner,
-  §6.2). `hive` is `{ center: string, letters: string[] }` (center letter
-  first) when a hive row was found, else `null`.
-  1. Look for the 7 hive letters as a standalone line of exactly 7 unique
-     letters in `rawText` (OCR renders them as one unspaced run, e.g.
-     `VAGILNT` — not space-separated). If found, everything before that line
-     (nav chrome, rank-dialog text — vocabulary that can't be blocklisted by
-     word) is dropped, and the first letter is the required center letter.
-     If found, `boostedText` (pass 2's text) is appended for extraction too —
-     safe only because every word from either pass, chrome garbling included,
-     still has to pass hive validation (step 3) before becoming a real
-     candidate. If no hive row is found, `boostedText` is ignored entirely, since
-     without a hive to validate against there's no safety net for its noise.
-  2. Uppercase the (possibly hive-trimmed and boosted-text-extended) text;
-     extract `/[A-Z]{4,}/g` matches; dedupe.
-  3. Drop blocklist hits (exported constant `UI_BLOCKLIST`) into `filteredUi`:
-     NYT chrome words — `PANGRAM, ANSWERS, YESTERDAY, TODAY, TODAYS, YESTERDAYS,
-     WORDS, POINTS, GENIUS, QUEEN, SPELLING, GAMES, EDITED, FOUND, RANKINGS`,
-     month names (`JANUARY…DECEMBER`), and day names (`SUNDAY…SATURDAY`).
-     Then, if a hive was found, drop any word using a letter outside the hive
-     or missing the center letter into `filteredInvalidLetters`.
-  4. Split remaining words already in the database (any status) into
-     `alreadyKnown` for the review screen's second section (§6.2).
-  5. Sort each list alphabetically.
+### 7.1 `ocr.ts` — three OCR passes per screenshot
+
+`createWorker('eng')` on demand (lazy — never at app startup), reused across
+uploads within a session, terminated on tab switch away from Add. Recognizes at
+the screenshot's native resolution — an earlier version upscaled anything under
+1000px on the assumption that small text hurts tesseract's accuracy, but real
+screenshots (~768px wide is a typical *common* phone screenshot width, not an
+edge case) showed upscaling actively destroys the hive row's low-contrast gold
+glyph under every interpolation kernel tried, with no measurable benefit
+elsewhere; removed once verified against real screenshots.
+
+Runs OCR **three times** per upload, returning `{ text, boostedText, hiveText }`:
+
+1. **`text`** — pass over the untouched image. Used for the primary word list
+   and as the first source for hive-row detection.
+2. **`boostedText`** — pass over a grayscale + contrast-stretched +
+   hard-thresholded copy (`boostContrast()`) that recovers faint/low-contrast
+   text, e.g. a word rendered mid-fade-in right as the user found it, that
+   pass 1 misses. The same luminance threshold that recovers faint text also
+   erases the hive row's gold letter (gold has *high* luminance under the
+   standard grayscale formula, so it gets thresholded to background-white,
+   not merely misread) — this pass is always additive to pass 1's words,
+   never a source for hive detection.
+3. **`hiveText`** *(added 2026-07-25)* — pass over a **gold-aware ink mask**
+   (`isolateInk()`): a pixel counts as ink if it's dark (ordinary black text,
+   luminance-based, same as before) **or** distinctly gold-hued
+   (`min(R,G) - B > 60`, catching gold's high-R/high-G/low-B signature that
+   luminance alone treats as background). This is what lets a gold center
+   letter that pass 1 misreads (e.g. "K" read as "W") get read correctly
+   instead, without which pass 2's erasure would be the only alternative.
+   Used exclusively as a fallback source of letters for hive-row detection
+   (§7.2) — never merged into the general word pool, since it isn't tuned for
+   ordinary body text.
+
+Progress callback surfaces all three passes across a 0–33% / 33–66% / 66–100%
+split, with labels ("Reading words…" / "Reading faint words…" / "Reading
+puzzle letters…"). Errors reject with a typed `OcrError`.
+
+### 7.2 `parser.ts` — hive detection, then word classification
+
+`parseCandidates(rawText, existingWords: Set<string>, boostedText?, hiveText?)`
+returns `{ candidates, alreadyKnown, filteredUi, filteredInvalidLetters, hive,
+corrections }` (the Add screen joins `alreadyKnown` against the db for status
+badges, sums `filteredUi.length + filteredInvalidLetters.length` for the review
+screen's "N filtered out" count, renders `hive` as the puzzle-letters banner,
+and renders `corrections` as the "Uncertain OCR readings" section — §6.2).
+`hive` is `{ center: string, letters: string[] }` (center letter first) when a
+hive row was found, else `null`.
+
+**Stage 1 — finding the hive row, with cross-validation** *(rewritten
+2026-07-25; originally just "first matching line," see below)*:
+
+A line of exactly 7 unique letters (OCR renders the row as one unspaced run,
+e.g. `VAGILNT`) is a *candidate*, but taking the first one found in the text is
+not enough on its own — screen chrome above the real row can coincidentally be
+exactly 7 letters too (the "Answers" screen title, e.g., which happens to also
+have a repeated letter and so gets excluded at this step — but nothing
+guarantees the next stray phrase will be so considerate). So instead:
+
+1. Collect every line matching that shape in `rawText`, in document order.
+2. Walk them from the end of the text backward (closest to the answer list
+   first — the true hive row is always immediately above the list, so
+   whatever chrome coincidentally matches the shape sits *earlier* in the
+   text, never later).
+3. For each candidate, extract the 4+ letter words immediately after it and
+   check what fraction of them actually fit that letter set (contain the
+   candidate's first letter, use no letter outside the set). If **≥50%**
+   validate, accept it — a candidate whose "hive" doesn't explain the real
+   words after it is chrome, not the letter row, no matter how plausible its
+   shape looked.
+4. If a positionally-right candidate's own letters fail that check (its
+   *position* is right but its *content* is wrong — see the gold-letter
+   misread in §7.1), fall back to `hiveText`: collect the same 7-unique-letter
+   candidates from that pass instead, and re-validate each against the *same*
+   word pool. The first one that clears 50% is accepted in the raw
+   candidate's place.
+5. If nothing clears the bar anywhere, `hive` is `null` — filtering is
+   skipped entirely for every downstream word rather than trusting an
+   unvalidated guess (this is also why a wrong-but-accepted hive would be
+   worse than no hive: see the ordering note at the end of §7.2).
+
+Everything in `rawText` before the accepted candidate's line (nav chrome,
+rank-dialog text — vocabulary that can't be blocklisted by word) is dropped.
+This same cross-validation is what makes concatenating multiple screenshots
+(§6.2) *more* reliable, not less: only the first page can supply a real hive
+candidate, but every page's words contribute to the validation fraction, so
+detection only gets more confident with a longer combined answer list.
+
+**Stage 2 — OCR correction, once a hive is confirmed** *(added 2026-07-27)*:
+
+A confirmed hive (≥50% of real words already validated against it) is treated
+as ground truth reliable enough to justify correcting individual words, not
+just picking the hive line — so before classifying a word, `normalizeOcrToken`
+is tried on it:
+
+- **Leading lowercase "l" → "I".** Every answer word is title-cased (see the
+  input assumption above), which is what makes this safe: a lowercase "l" can
+  only legitimately appear *after* the first character (e.g. "Ballot"); one
+  *in* the leading position is unambiguously a misread capital "I" (observed:
+  "Iota" → "lota", "Ionization" → "lonization", both in the raw and
+  boosted passes — the misread isn't a contrast/color problem like the gold
+  letter, just a shape collision between two glyphs).
+- **Any digit → its letter look-alike, at any position** (`0→O`, `1→I`,
+  `5→S`). No digit is ever legitimate in an answer word regardless of
+  position, so this needs no leading-character restriction.
+
+A correction is only *used* if it changes the outcome: the corrected form
+must pass hive validation while the original did not (an already-valid word
+is left untouched, and nothing is attempted at all without a confirmed hive —
+no ground truth, no correction). When used, the corrected spelling is what
+gets classified in step 2 below; the original raw OCR spelling is recorded in
+`corrections` for the review screen (§6.2) rather than silently discarded.
+Token extraction preserves original case up to this point (uppercasing only
+after the leading-position check) specifically so this distinction is
+possible.
+
+**Stage 3 — classifying every remaining word:**
+
+1. Uppercase the (possibly corrected) token; dedupe.
+2. Drop blocklist hits (exported constant `UI_BLOCKLIST`) into `filteredUi`:
+   NYT chrome words — `PANGRAM, ANSWERS, YESTERDAY, TODAY, TODAYS, YESTERDAYS,
+   WORDS, POINTS, GENIUS, QUEEN, SPELLING, GAMES, EDITED, FOUND, RANKINGS`,
+   month names (`JANUARY…DECEMBER`), and day names (`SUNDAY…SATURDAY`).
+   Then, if a hive was found, drop any word using a letter outside the hive
+   or missing the center letter into `filteredInvalidLetters`. **This
+   ordering matters**: a word only reaches "already known" if it first
+   fits the hive, so a wrong-but-accepted hive could hide real known words
+   behind `filteredInvalidLetters` — which is exactly why Stage 1 requires
+   ≥50% validation before accepting a hive at all rather than falling back
+   to this per-word check to catch a bad guess after the fact.
+3. Split remaining words already in the database (any status) into
+   `alreadyKnown` for the review screen's second section (§6.2). Everything
+   else is a new `candidate`.
+4. Sort each list alphabetically (`corrections` sorted by the raw spelling).
+- `boostedText`, when a hive was found, is folded into the word pool for
+  steps 1–3 above (its extra OCR noise is safe only because every word,
+  chrome garbling included, still has to pass hive validation). If no hive
+  row is found, `boostedText` is ignored entirely — without a hive to
+  validate against, there's no safety net for its noise. `hiveText` is never
+  folded into the word pool; it is only ever consulted during hive detection
+  (Stage 1, step 4 above).
 - The review checklist (§6.2) is the final filter for anything heuristics miss —
   the design deliberately prefers blocklist + hive validation + human review
   over cleverness that might eat real words. Blocklist entries are NYT chrome
@@ -284,6 +423,14 @@ whatever nav chrome/rank-dialog text happened to be on screen above that.
   (e.g. `QUEEN` or a month name could be a real answer); if that ever bites, P2
   can surface filtered words as unchecked-by-default candidates instead of
   hiding them.
+- **Known residual gap:** an unpaired pangram word (one using all 7 hive
+  letters) that happens to render alone on its own line — no second column
+  entry, no "+" checkmark — is structurally indistinguishable from a true
+  hive row by shape alone. In practice this is rare (pangrams normally share
+  a line with another word) and, if it happens on a continuation screenshot
+  with no real hive row present, the failure mode is losing one word (it
+  gets treated as a consumed header) rather than corrupting the whole list.
+  Not solved; noted here rather than silently accepted.
 
 ## 8. Definition fetching (`dictionary.ts`)
 
@@ -294,7 +441,11 @@ whatever nav chrome/rank-dialog text happened to be on screen above that.
   **300 ms gap** between requests (the API rate-limits bursts; a 40-word puzzle
   finishes in ~15 s, acceptable behind a progress bar).
 - Extract `data[0].meanings[0].definitions[0].definition`. Prefix with the part
-  of speech when present ("(noun) A mushroom with gills…").
+  of speech when present ("(noun) A mushroom with gills…"). This is the
+  *first* meaning dictionaryapi.dev (a Wiktionary wrapper) happens to list, not
+  necessarily the most common one — the source data isn't ordered by
+  frequency of use, so an unusual/archaic sense can occasionally show up over
+  a more common one. §8.1 is the mitigation.
 - **HTTP 429:** wait 2 s, retry once; second 429 → treat as not found.
 - **404 / network error / abort of a single request:** word gets
   `definition: 'No definition found — tap to edit.'`, `definitionSource: 'none'`.
@@ -302,6 +453,36 @@ whatever nav chrome/rank-dialog text happened to be on screen above that.
 - `signal` (AbortSignal) supports the wizard's Cancel.
 - Each result: `definitionSource: 'api'` on success. Manual edits anywhere set
   `'manual'` and are never overwritten by re-fetches.
+- **Abort detection gotcha** *(fixed 2026-07-27)*: a real `fetch()` abort
+  throws a `DOMException` named `"AbortError"`. Checking `err instanceof
+  Error` to detect it works in real browsers (`DOMException` extends `Error`
+  there) but silently returns `false` under jsdom, the test runtime — so the
+  existing Cancel-button test only passed via an unrelated `sleep()`
+  rejection on the *next* word, not because the check actually worked. Fixed
+  by also checking `err instanceof DOMException`, which is correct regardless
+  of runtime.
+
+### 8.1 Alternate definitions and manual lookup *(added 2026-07-27)*
+
+Surfaced inside the same definition editor used by both Study (§6.1) and
+Words (§6.3):
+
+- **`fetchAlternateDefinitions(word)`**: a separate, on-demand fetch (not part
+  of the rate-limited import batch — no retry/backoff) to the same
+  dictionaryapi.dev endpoint, but flattening *every* meaning/definition across
+  *every* entry in the response, instead of keeping only the first. Triggered
+  by a "See other dictionary definitions" button in the editor; each
+  alternative is listed with a **Use** button that drops it into the textarea
+  (the currently-showing text is filtered out of the list). A "No other
+  definitions found" message covers the empty/error case.
+- **"Look up on Google" link**: a plain `<a target="_blank">` to
+  `google.com/search?q=define+{word}`, not a fetch — there's no public Google
+  definitions API, and scraping Google's search HTML would hit CORS in this
+  client-only PWA (no backend to proxy through) as well as being fragile/ToS-
+  risky. This is a manual fallback alongside the API-backed alternatives
+  above, not a replacement for them.
+- Using either path still goes through the normal Save button, which sets
+  `definitionSource: 'manual'` — same as any other hand-edit.
 
 ## 9. PWA
 
@@ -341,15 +522,25 @@ up a deploy.
 - **Unit (Vitest):**
   - `leitner.ts`: promotion/demotion paths, 4 AM boundary math (incl. late-night
     review), due ordering, `nextDueAt`.
-  - `parser.ts`: fixture file of real OCR output from an NYT answers screenshot
+  - `parser.ts`: fixture files of real OCR output from NYT answers screenshots
     (checked into `src/lib/__fixtures__/`), blocklist, dedupe, already-known
-    split.
+    split; hive cross-validation (coincidental-chrome rejection, proximity
+    preference, hiveText fallback), multi-screenshot validation using words
+    carried over from a second concatenated page, and OCR correction (leading
+    `l`→`I`, digit→letter, corrections left unattempted without a confirmed
+    hive, already-valid words never flagged).
   - `storage.ts`: empty load, round-trip, corrupt-value quarantine, legacy-key
     migration, import merge rules (newer wins, mastered wins).
-  - `dictionary.ts`: mocked fetch — success shape, 404, 429-retry, abort.
+  - `dictionary.ts`: mocked fetch — success shape, 404, 429-retry, abort;
+    `fetchAlternateDefinitions` flattening/deduping across entries, 404/network
+    error/abort handling.
 - **Component (RTL):** Add-wizard review flow (uncheck → commit count,
-  "Already know" → mastered, reset-to-learning checkbox), Study
-  grade-advances-card, Words edit/delete.
+  "Already know" → mastered, reset-to-learning checkbox, multi-file upload
+  combining into one parse, pangram grouping/divider, uncertain-corrections
+  section and its own commit path), Study (grade-advances-card, Skip
+  defers-without-scheduling and resets card to front, Skip disabled with only
+  one word due), Words (edit/delete, alternate-definition preview/swap,
+  Google-lookup link, "no other definitions" state).
 - **Manual smoke checklist** (in README): install to Android home screen,
   airplane-mode OCR, real screenshot end-to-end, export → reset → import.
 - CI: GitHub Actions runs typecheck + tests on push; deploy job publishes `dist/`
@@ -360,8 +551,18 @@ up a deploy.
 1. **Audio pronunciation** — speak the word on the card front via
    `speechSynthesis` (offline-capable).
 2. **Manual word entry** — type a word, fetch its definition, commit to box 1.
-3. Same-session re-show of missed words; surfacing blocklist-filtered words as
-   unchecked candidates; per-day review stats/streaks.
+3. Automatic same-session re-show of a **missed** word specifically (still
+   unimplemented: missing a card still sends it to box 1, due tomorrow, same
+   as always). **Note:** this is distinct from the voluntary **Skip** button
+   added 2026-07-27 (§6.1), which defers a card *before* grading it and never
+   touches its schedule — Skip doesn't retire this backlog item.
+4. Surfacing blocklist-filtered words (`filteredUi`) as unchecked-by-default
+   candidates instead of hiding them entirely; per-day review stats/streaks.
+5. Persisting the Study "Skip" order across a reload (currently pure
+   session/component state — see §6.1).
+6. The pangram/continuation-page ambiguity noted at the end of §7.2 (an
+   unpaired pangram word alone on its own line, on a screenshot with no real
+   hive row, can be mistaken for one — known, low-frequency, not fixed).
 
 ## 13. Milestones (implementation-plan seeds)
 
