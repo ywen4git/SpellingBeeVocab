@@ -2,7 +2,7 @@ import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode,
 } from 'react';
 import type { VocabDb, VocabWord } from '../lib/types';
-import { emptyDb } from '../lib/types';
+import { emptyDb, PLACEHOLDER_DEFINITION } from '../lib/types';
 import {
   gradeGotIt, gradeMissed, knownWordEntry, newWordEntry, resetToLearning, unmaster,
 } from '../lib/leitner';
@@ -74,8 +74,12 @@ export function VocabProvider({ children }: { children: ReactNode }) {
     },
     gradeWord: (word, gotIt) =>
       updateWord(word, (w) => (gotIt ? gradeGotIt(w, Date.now()) : gradeMissed(w, Date.now()))),
-    editDefinition: (word, definition) =>
-      updateWord(word, (w) => ({ ...w, definition, definitionSource: 'manual' })),
+    editDefinition: (word, definition) => {
+      const trimmed = definition.trim();
+      return updateWord(word, (w) => (trimmed
+        ? { ...w, definition: trimmed, definitionSource: 'manual' }
+        : { ...w, definition: PLACEHOLDER_DEFINITION, definitionSource: 'none' }));
+    },
     deleteWord: (word) =>
       setDb((prev) => {
         const words = { ...prev.words };

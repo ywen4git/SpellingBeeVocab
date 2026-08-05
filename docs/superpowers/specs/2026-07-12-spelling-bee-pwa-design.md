@@ -235,10 +235,11 @@ confirm pattern for destructive actions.
 - Search box (substring match on word), filter chips: All / Learning / Mastered.
 - Each row: word, box/mastered badge, first line of definition, lapses count.
 - Tapping a row expands it: full definition, **Edit definition** (textarea →
-  save sets `definitionSource: 'manual'`; see §8 for the alternate-definition
-  picker and Google lookup link available inside that editor), **Delete**
-  (inline confirm), and for mastered words an **Unmaster** action (back to
-  learning, box 3, due now) in case something was graduated prematurely.
+  save sets `definitionSource: 'manual'`, or reverts to the placeholder if left
+  empty — see §8.2; see §8.1 for the alternate-definition picker and Google
+  lookup link available inside that editor), **Delete** (inline confirm), and
+  for mastered words an **Unmaster** action (back to learning, box 3, due now)
+  in case something was graduated prematurely.
 
 ### 6.4 Data
 
@@ -483,6 +484,17 @@ Words (§6.3):
   above, not a replacement for them.
 - Using either path still goes through the normal Save button, which sets
   `definitionSource: 'manual'` — same as any other hand-edit.
+
+### 8.2 Placeholder-aware editing *(added 2026-08-04)*
+
+When a word's definition is the "not found" placeholder
+(`PLACEHOLDER_DEFINITION`, `definitionSource: 'none'`), opening the editor
+starts the textarea empty instead of pre-filled with the placeholder text —
+so the common case (pasting a definition in after OCR/API lookup came up
+empty) doesn't require manually selecting and deleting the placeholder first.
+Saving is symmetric: if the textarea is empty (or whitespace-only) on Save,
+`editDefinition` writes the placeholder back with `definitionSource: 'none'`
+rather than persisting an empty string as a "manual" definition.
 
 ## 9. PWA
 

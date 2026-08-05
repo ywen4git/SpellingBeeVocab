@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useVocab } from '../context/VocabProvider';
 import { fetchAlternateDefinitions, formatDefinition, type DefinitionAlternative } from '../lib/dictionary';
+import { PLACEHOLDER_DEFINITION } from '../lib/types';
 
 type Alternatives =
   | { status: 'idle' }
@@ -12,7 +13,7 @@ export function DefinitionEditor({
   word, initial, onDone,
 }: { word: string; initial: string; onDone: () => void }) {
   const { editDefinition } = useVocab();
-  const [text, setText] = useState(initial);
+  const [text, setText] = useState(initial === PLACEHOLDER_DEFINITION ? '' : initial);
   const [alternatives, setAlternatives] = useState<Alternatives>({ status: 'idle' });
 
   const loadAlternatives = async () => {
@@ -85,7 +86,7 @@ export function DefinitionEditor({
           Cancel
         </button>
         <button
-          onClick={() => { editDefinition(word, text.trim()); onDone(); }}
+          onClick={() => { editDefinition(word, text); onDone(); }}
           className="min-h-[44px] flex-1 rounded-xl bg-amber-400 py-2 text-sm font-semibold"
         >
           Save

@@ -4,7 +4,7 @@ import { afterEach, vi } from 'vitest';
 import App from '../../App';
 import { DB_KEY } from '../../lib/storage';
 import { knownWordEntry, newWordEntry } from '../../lib/leitner';
-import { SCHEMA_VERSION } from '../../lib/types';
+import { PLACEHOLDER_DEFINITION, SCHEMA_VERSION } from '../../lib/types';
 import type { VocabWord } from '../../lib/types';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -56,6 +56,27 @@ it('edits a definition from the list', async () => {
   expect(JSON.parse(localStorage.getItem(DB_KEY)!).words.AGARIC).toMatchObject({
     definition: 'a gilled fungus',
     definitionSource: 'manual',
+  });
+});
+
+it('starts the editor empty when the definition is the "not found" placeholder', async () => {
+  seed(newWordEntry('AGARIC', PLACEHOLDER_DEFINITION, 'none', 1));
+  await openWords();
+  await userEvent.click(screen.getByRole('button', { name: /AGARIC/ }));
+  await userEvent.click(screen.getByRole('button', { name: /edit definition/i }));
+  expect(screen.getByRole('textbox', { name: /definition for AGARIC/i })).toHaveValue('');
+});
+
+it('saving an empty definition reverts to the "not found" placeholder', async () => {
+  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  await openWords();
+  await userEvent.click(screen.getByRole('button', { name: /AGARIC/ }));
+  await userEvent.click(screen.getByRole('button', { name: /edit definition/i }));
+  await userEvent.clear(screen.getByRole('textbox', { name: /definition for AGARIC/i }));
+  await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+  expect(JSON.parse(localStorage.getItem(DB_KEY)!).words.AGARIC).toMatchObject({
+    definition: PLACEHOLDER_DEFINITION,
+    definitionSource: 'none',
   });
 });
 
