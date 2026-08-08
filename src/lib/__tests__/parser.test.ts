@@ -130,6 +130,20 @@ describe('parseCandidates', () => {
     expect(r.candidates).toEqual(['GALLIVANT', 'VITA', 'VITAL']);
   });
 
+  it('recovers the hive letters from hiveText when the raw pass inserts a spurious extra letter', () => {
+    // Raw pass misread the gold center letter N and split it into two glyphs ("NWACDEHL", 8 chars),
+    // so the row no longer matches the "exactly 7 letters" pattern at all — but the ink-isolated pass
+    // still reads a clean 7-letter row that validates against the same words.
+    const r = parseCandidates(
+      'NWACDEHL\nCHANNELED DECADENCE',
+      new Set(),
+      undefined,
+      'NACDEHL',
+    );
+    expect(r.hive).toEqual({ center: 'N', letters: ['N', 'A', 'C', 'D', 'E', 'H', 'L'] });
+    expect(r.candidates).toEqual(['CHANNELED', 'DECADENCE']);
+  });
+
   it('ignores hiveText when the raw-pass hive row already validates', () => {
     const r = parseCandidates('VAGILNT\nGALLIVANT VITAL VITA', new Set(), undefined, 'ZZZZZZZ');
     expect(r.hive).toEqual({ center: 'V', letters: ['V', 'A', 'G', 'I', 'L', 'N', 'T'] });

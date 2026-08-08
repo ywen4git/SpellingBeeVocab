@@ -61,6 +61,27 @@ function sevenLetterLines(text: string): { letters: string[]; end: number }[] {
   return out;
 }
 
+/**
+ * Lines of 6-8 letters and nothing else, in document order — a wider net than
+ * `sevenLetterLines()`, used only to locate *where* the hive row sits in
+ * `rawText`. The raw pass can misread the gold center letter's glyph as two
+ * characters (or drop a stray one), corrupting the row's length and not just
+ * its content — e.g. "NACDEHL" read as "NWACDEHL" — which would otherwise
+ * make the row invisible to position-based detection entirely, even though
+ * `hiveText`'s ink-isolated pass reads it cleanly. Content is validated
+ * separately (own letters if exactly 7 unique, or hiveText) once a position
+ * is found; this only answers "is there a short all-letters line here".
+ */
+function hiveRowAnchors(text: string): { raw: string; end: number }[] {
+  const regex = /^[ \t]*([A-Za-z]{6,8})[ \t]*$/gm;
+  const out: { raw: string; end: number }[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(text))) {
+    out.push({ raw: match[1].toUpperCase(), end: match.index + match[0].length });
+  }
+  return out;
+}
+
 function validFraction(hive: HiveLetters, words: string[]): number {
   if (words.length === 0) return 0;
   return words.filter((w) => isValidForHive(w, hive)).length / words.length;
@@ -86,28 +107,36 @@ function validFraction(hive: HiveLetters, words: string[]): number {
  *
  * That position is reliable even when a candidate's own letters aren't: the
  * gold center letter is rendered in a color distinct enough that the plain
- * OCR pass can misread it (e.g. "WEGINOV" for the true "KEGINOV") while
- * still correctly placing the line itself right above the answer list. When
- * a positionally-right candidate fails validation, `hiveText` — a separate
- * OCR pass over a gold-aware ink mask (see isolateInk() in ocr.ts) that
- * recovers that letter instead of erasing it — is checked for a
- * differently-read version of the same row, re-validated against the same
- * word pool before being trusted.
+ * OCR pass can misread it — either as a same-length substitution (e.g.
+ * "WEGINOV" for the true "KEGINOV") or, since it's a whole glyph and not
+ * just a color, as a split/dropped character that corrupts the row's length
+ * too (e.g. "NWACDEHL" for the true "NACDEHL") — while still correctly
+ * placing the line itself right above the answer list. Position is therefore
+ * found via `hiveRowAnchors()`'s wider 6-8 letter net, not the strict 7; once
+ * a position is found, content is validated using the anchor's own letters
+ * (only if exactly 7 unique) and, if that fails or doesn't apply, `hiveText`
+ * — a separate OCR pass over a gold-aware ink mask (see isolateInk() in
+ * ocr.ts) that recovers the row cleanly instead of misreading it — is
+ * checked for a differently-read version of the same row, re-validated
+ * against the same word pool before being trusted.
  */
 function findHiveLetters(
   rawText: string,
   hiveText?: string,
 ): { hive: HiveLetters; rest: string } | null {
-  const rawCandidates = sevenLetterLines(rawText);
+  const rawCandidates = hiveRowAnchors(rawText);
   const inkCandidates = hiveText ? sevenLetterLines(hiveText) : [];
   for (let i = rawCandidates.length - 1; i >= 0; i--) {
-    const { letters, end } = rawCandidates[i];
+    const { raw, end } = rawCandidates[i];
     const rest = rawText.slice(end);
     const words = rest.toUpperCase().match(/[A-Z]{4,}/g) ?? [];
     if (words.length === 0) continue;
 
-    const rawHive: HiveLetters = { center: letters[0], letters: new Set(letters) };
-    if (validFraction(rawHive, words) >= VALID_FRACTION_THRESHOLD) return { hive: rawHive, rest };
+    const letters = raw.split('');
+    if (new Set(letters).size === 7) {
+      const rawHive: HiveLetters = { center: letters[0], letters: new Set(letters) };
+      if (validFraction(rawHive, words) >= VALID_FRACTION_THRESHOLD) return { hive: rawHive, rest };
+    }
 
     for (const ink of inkCandidates) {
       const inkHive: HiveLetters = { center: ink.letters[0], letters: new Set(ink.letters) };

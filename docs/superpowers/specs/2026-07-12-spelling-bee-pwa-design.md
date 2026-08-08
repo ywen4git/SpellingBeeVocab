@@ -326,7 +326,8 @@ and renders `corrections` as the "Uncertain OCR readings" section — §6.2).
 hive row was found, else `null`.
 
 **Stage 1 — finding the hive row, with cross-validation** *(rewritten
-2026-07-25; originally just "first matching line," see below)*:
+2026-07-25, originally just "first matching line"; position search widened
+2026-08-08, see step 1)*:
 
 A line of exactly 7 unique letters (OCR renders the row as one unspaced run,
 e.g. `VAGILNT`) is a *candidate*, but taking the first one found in the text is
@@ -335,23 +336,32 @@ exactly 7 letters too (the "Answers" screen title, e.g., which happens to also
 have a repeated letter and so gets excluded at this step — but nothing
 guarantees the next stray phrase will be so considerate). So instead:
 
-1. Collect every line matching that shape in `rawText`, in document order.
+1. Collect every line of **6-8** letters and nothing else in `rawText`, in
+   document order — a wider net than "exactly 7," used only to locate
+   *position*. The gold center letter's glyph, not just its color, is what the
+   raw pass can misread, so it can corrupt the row's *length* too (e.g. the
+   true `NACDEHL` read as 8-character `NWACDEHL`), not just a same-length
+   letter substitution — a strict 7-letter match would make that row invisible
+   to detection entirely, with no candidate for the later steps to even
+   consider.
 2. Walk them from the end of the text backward (closest to the answer list
    first — the true hive row is always immediately above the list, so
    whatever chrome coincidentally matches the shape sits *earlier* in the
    text, never later).
 3. For each candidate, extract the 4+ letter words immediately after it and
    check what fraction of them actually fit that letter set (contain the
-   candidate's first letter, use no letter outside the set). If **≥50%**
-   validate, accept it — a candidate whose "hive" doesn't explain the real
-   words after it is chrome, not the letter row, no matter how plausible its
-   shape looked.
-4. If a positionally-right candidate's own letters fail that check (its
-   *position* is right but its *content* is wrong — see the gold-letter
-   misread in §7.1), fall back to `hiveText`: collect the same 7-unique-letter
-   candidates from that pass instead, and re-validate each against the *same*
-   word pool. The first one that clears 50% is accepted in the raw
-   candidate's place.
+   candidate's first letter, use no letter outside the set) — only when the
+   candidate is exactly 7 unique letters; a 6- or 8-letter candidate has no
+   valid letter set of its own to test and exists purely to supply a
+   position for step 4. If **≥50%** validate, accept it — a candidate whose
+   "hive" doesn't explain the real words after it is chrome, not the letter
+   row, no matter how plausible its shape looked.
+4. If a positionally-right candidate's own letters don't produce an accepted
+   hive (either its *content* is wrong — see the gold-letter misread in
+   §7.1 — or, per step 1, it isn't 7 letters at all), fall back to `hiveText`:
+   collect 7-unique-letter candidates from that pass instead, and re-validate
+   each against the *same* word pool. The first one that clears 50% is
+   accepted in the raw candidate's place.
 5. If nothing clears the bar anywhere, `hive` is `null` — filtering is
    skipped entirely for every downstream word rather than trusting an
    unvalidated guess (this is also why a wrong-but-accepted hive would be
