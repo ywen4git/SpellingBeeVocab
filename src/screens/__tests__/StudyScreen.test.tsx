@@ -83,3 +83,12 @@ it('editing a definition from the card back marks it manual', async () => {
     definitionSource: 'manual',
   });
 });
+
+it('renders a multi-sense definition as separate paragraphs', async () => {
+  seed(newWordEntry('AGARIC', '(noun) A fungus.\n\n(verb) To forage for fungus.', 'api', Date.now() - 1000));
+  render(<App />);
+  await userEvent.click(screen.getByRole('heading', { name: 'AGARIC' }));
+  const definition = screen.getByText(/A fungus\./);
+  expect(definition).toHaveClass('whitespace-pre-line');
+  expect(definition).toHaveTextContent('(verb) To forage for fungus.');
+});

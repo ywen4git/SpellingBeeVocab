@@ -145,3 +145,13 @@ it('unmaster returns a word to learning box 3', async () => {
     box: 3,
   });
 });
+
+it('renders a multi-sense definition as separate paragraphs', async () => {
+  seed(newWordEntry('AGARIC', '(noun) A fungus.\n\n(verb) To forage for fungus.', 'api', 1));
+  await openWords();
+  await userEvent.click(screen.getByRole('button', { name: /AGARIC/ }));
+  const definition = screen.getByText(/A fungus\./);
+  expect(definition).toHaveClass('whitespace-pre-line');
+  expect(definition).toHaveTextContent('(noun) A fungus.');
+  expect(definition).toHaveTextContent('(verb) To forage for fungus.');
+});

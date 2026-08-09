@@ -78,7 +78,7 @@ export default function WordsScreen() {
                 {editing ? (
                   <DefinitionEditor word={w.word} initial={w.definition} onDone={() => setEditing(false)} />
                 ) : (
-                  <p className="text-sm text-slate-700">{w.definition}</p>
+                  <p className="whitespace-pre-line text-sm text-slate-700">{w.definition}</p>
                 )}
                 <p className="text-xs text-slate-400">{w.lapses} lapses</p>
                 {!editing && (

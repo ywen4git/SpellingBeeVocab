@@ -74,7 +74,7 @@ export default function StudyScreen() {
           <DefinitionEditor word={current.word} initial={current.definition} onDone={() => setEditing(false)} />
         ) : (
           <>
-            <p className="text-base font-medium leading-relaxed text-slate-700">{current.definition}</p>
+            <p className="whitespace-pre-line text-base font-medium leading-relaxed text-slate-700">{current.definition}</p>
             <button
               onClick={(e) => { e.stopPropagation(); setEditing(true); }}
               className="mt-4 min-h-[44px] text-xs font-semibold text-amber-600"
