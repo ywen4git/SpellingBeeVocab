@@ -122,14 +122,14 @@ export default function AddScreen() {
     const known = knowWords.map((w) => byWord.get(w)!);
     commitImport({ learn, known, resets });
 
-    const missing = results.filter((r) => r.source === 'none').length;
+    const missingWords = results.filter((r) => r.source === 'none').map((r) => r.word);
     const parts = [
       learn.length > 0 && `${learn.length} added to learning`,
       known.length > 0 && `${known.length} marked known`,
       resets.length > 0 && `${resets.length} reset to learning`,
-      missing > 0 && `${missing} without definitions`,
+      missingWords.length > 0 && `${missingWords.length} without definitions`,
     ].filter(Boolean);
-    toast.show(parts.join(', '));
+    toast.show(parts.join(', '), missingWords.length > 0 ? { detail: missingWords } : undefined);
     setPhase({ name: 'upload' });
   };
 

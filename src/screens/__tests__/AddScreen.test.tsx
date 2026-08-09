@@ -6,6 +6,7 @@ import { DB_KEY } from '../../lib/storage';
 import { knownWordEntry } from '../../lib/leitner';
 import { SCHEMA_VERSION } from '../../lib/types';
 import { recognizeImage } from '../../lib/ocr';
+import { fetchDefinitions } from '../../lib/dictionary';
 
 vi.mock('../../lib/ocr', () => ({
   recognizeImage: vi.fn(async () => ({ text: 'AGARIC NAIAD PANGRAM TIARA', boostedText: '', hiveText: '' })),
@@ -147,4 +148,22 @@ it('can add a correction\'s raw OCR spelling instead, if the guessed fix looks w
   const stored = JSON.parse(localStorage.getItem(DB_KEY)!);
   expect(stored.words.LOTA).toMatchObject({ status: 'learning' });
   expect(stored.words.IOTA).toBeUndefined();
+});
+
+it('shows which specific words failed definition lookup', async () => {
+  vi.mocked(fetchDefinitions).mockImplementationOnce(async (words: string[]) =>
+    words.map((word) => (
+      word === 'AGARIC'
+        ? { word, definition: 'No definition found — tap to edit.', source: 'none' as const }
+        : { word, definition: `def of ${word}`, source: 'api' as const }
+    )));
+  seedTiaraMastered();
+  await uploadShot();
+  await userEvent.click(screen.getByRole('checkbox', { name: 'NAIAD' }));
+  await userEvent.click(screen.getByRole('checkbox', { name: /TIARA/ }));
+  await userEvent.click(screen.getByRole('button', { name: /add 2 words/i }));
+  const status = await screen.findByRole('status');
+  expect(status).toHaveTextContent('1 without definitions');
+  await userEvent.click(screen.getByRole('button', { name: /show/i }));
+  expect(screen.getByText('AGARIC')).toBeInTheDocument();
 });
