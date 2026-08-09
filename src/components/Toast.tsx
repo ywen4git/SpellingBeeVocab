@@ -46,7 +46,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               <button
                 type="button"
                 onClick={() => setExpanded(true)}
-                className="shrink-0 font-semibold underline underline-offset-2"
+                className="inline-flex min-h-[44px] items-center shrink-0 font-semibold underline underline-offset-2"
               >
                 Show
               </button>
@@ -56,7 +56,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 type="button"
                 onClick={close}
                 aria-label="Dismiss"
-                className="ml-auto shrink-0 text-slate-400"
+                className="inline-flex min-h-[44px] items-center ml-auto shrink-0 text-slate-400"
               >
                 ×
               </button>
