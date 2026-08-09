@@ -1,4 +1,5 @@
 import { PLACEHOLDER_DEFINITION } from './types';
+import { abortError, isAbortError } from './abortError';
 
 export interface DefinitionResult {
   word: string;
@@ -14,20 +15,6 @@ export interface FetchOptions {
 }
 
 const API = 'https://api.dictionaryapi.dev/api/v2/entries/en/';
-
-function abortError(): DOMException {
-  return new DOMException('Aborted', 'AbortError');
-}
-
-/**
- * A real `fetch()` abort throws a DOMException named "AbortError" — which extends Error in actual
- * browsers, but NOT under jsdom (Node's test environment), so `err instanceof Error` alone is an
- * environment-dependent check that silently fails in tests. Checking DOMException too makes this
- * correct regardless of which runtime threw it.
- */
-function isAbortError(err: unknown): boolean {
-  return (err instanceof DOMException || err instanceof Error) && err.name === 'AbortError';
-}
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
