@@ -1,6 +1,6 @@
 # Bee Vocab Builder — Full Design Spec
 
-**Date:** 2026-07-12 (originally); kept in sync with the shipped app — last reviewed 2026-07-27
+**Date:** 2026-07-12 (originally); kept in sync with the shipped app — last reviewed 2026-08-08
 **Status:** Implemented (v1) and actively extended; this document tracks current behavior, not just the original v1 plan
 **Supersedes:** `spelling-bee-pwa-plan.md` (original draft; kept for reference)
 
@@ -50,7 +50,7 @@ words through a Leitner-box spaced-repetition flashcard system.
 | OCR | `tesseract.js` (WASM, in-browser, `eng` model) |
 | PWA | `vite-plugin-pwa` (Workbox `generateSW`) |
 | Storage | `localStorage`, single versioned key |
-| Dictionary | `https://api.dictionaryapi.dev/api/v2/entries/en/{word}` |
+| Dictionary | `https://api.dictionaryapi.dev/api/v2/entries/en/{word}` (default), optional Merriam-Webster Collegiate API (§8.3) |
 | Tests | Vitest + React Testing Library |
 | Deploy | GitHub Actions → GitHub Pages |
 
@@ -229,6 +229,12 @@ confirm pattern for destructive actions.
    are committed anyway with the placeholder (§8). Commit is atomic at the end
    of fetching (single db write), but fetching is interruptible: a Cancel button
    commits nothing (including resets).
+   - **Failed-word detail** *(added 2026-08-08)*: the "N without definitions"
+     toast carries the specific failed words as collapsed detail — a "Show"
+     toggle expands a chip list of them inline. Any toast carrying detail
+     suspends the normal 4s auto-dismiss (replaced by an explicit close), since
+     reading a word list against a countdown isn't fair; plain toasts elsewhere
+     in the app are unaffected.
 
 ### 6.3 Words
 
@@ -447,16 +453,33 @@ possible.
 
 `fetchDefinitions(words, onProgress, signal)`:
 
-- Sequential requests to
-  `https://api.dictionaryapi.dev/api/v2/entries/en/{word.toLowerCase()}` with a
-  **300 ms gap** between requests (the API rate-limits bursts; a 40-word puzzle
-  finishes in ~15 s, acceptable behind a progress bar).
-- Extract `data[0].meanings[0].definitions[0].definition`. Prefix with the part
-  of speech when present ("(noun) A mushroom with gills…"). This is the
-  *first* meaning dictionaryapi.dev (a Wiktionary wrapper) happens to list, not
-  necessarily the most common one — the source data isn't ordered by
-  frequency of use, so an unusual/archaic sense can occasionally show up over
-  a more common one. §8.1 is the mitigation.
+- Sequential requests, one per word, with a **300 ms gap** between requests
+  (dictionaryapi.dev rate-limits bursts; a 40-word puzzle finishes in ~15 s,
+  acceptable behind a progress bar).
+- **Provider adapter pattern** *(added 2026-08-08, see §8.3)*: each source
+  (dictionaryapi.dev, optionally Merriam-Webster) has its own parser that
+  normalizes that source's raw JSON into the shared shape
+  `DefinitionAlternative[] = { partOfSpeech: string; definition: string }[]`.
+  Everything downstream — sense grouping, formatting, the alternates picker
+  (§8.1) — operates only on that normalized shape and has no source-specific
+  branching. This is what lets Merriam-Webster be added as a second source
+  without touching grouping/formatting/UI code, and what any future source
+  would plug into the same way.
+- **Sense grouping** *(added 2026-08-08)*: from a word's normalized
+  alternatives (in source order), keep the first definition per distinct
+  `partOfSpeech`, capped at **3** groups, joined with `"\n\n"` — each group
+  formatted as before ("(noun) A mushroom with gills…"). Previously only
+  `alternatives[0]` was kept; grouping exists because a single "first sense"
+  is not necessarily the most common one — neither source orders strictly by
+  frequency — and a word's common meaning often differs by part of speech
+  (e.g. "novel" as adjective vs. noun), which a single pick can never
+  capture. §8.1 (browsing every sense, not just the auto-picked ones) remains
+  the mitigation for the *within-part-of-speech* case (grouping still only
+  keeps one sense per part of speech).
+- Rendered with `whitespace-pre-line` wherever a definition is shown in full
+  (Study card back, Words row detail — not the Words list's truncated
+  preview), so the `"\n\n"` group separators render as paragraph breaks
+  instead of collapsing.
 - **HTTP 429:** wait 2 s, retry once; second 429 → treat as not found.
 - **404 / network error / abort of a single request:** word gets
   `definition: 'No definition found — tap to edit.'`, `definitionSource: 'none'`.
@@ -479,13 +502,14 @@ Surfaced inside the same definition editor used by both Study (§6.1) and
 Words (§6.3):
 
 - **`fetchAlternateDefinitions(word)`**: a separate, on-demand fetch (not part
-  of the rate-limited import batch — no retry/backoff) to the same
-  dictionaryapi.dev endpoint, but flattening *every* meaning/definition across
-  *every* entry in the response, instead of keeping only the first. Triggered
-  by a "See other dictionary definitions" button in the editor; each
-  alternative is listed with a **Use** button that drops it into the textarea
-  (the currently-showing text is filtered out of the list). A "No other
-  definitions found" message covers the empty/error case.
+  of the rate-limited import batch — no retry/backoff) against the **active
+  provider** (§8.3 — Merriam-Webster if a key is configured, else
+  dictionaryapi.dev, same as import), flattening *every* meaning/definition
+  across *every* entry in the response, instead of just the grouped subset
+  §8 auto-picks. Triggered by a "See other dictionary definitions" button in
+  the editor; each alternative is listed with a **Use** button that drops it
+  into the textarea (the currently-showing text is filtered out of the list).
+  A "No other definitions found" message covers the empty/error case.
 - **"Look up on Google" link**: a plain `<a target="_blank">` to
   `google.com/search?q=define+{word}`, not a fetch — there's no public Google
   definitions API, and scraping Google's search HTML would hit CORS in this
@@ -505,6 +529,55 @@ empty) doesn't require manually selecting and deleting the placeholder first.
 Saving is symmetric: if the textarea is empty (or whitespace-only) on Save,
 `editDefinition` writes the placeholder back with `definitionSource: 'none'`
 rather than persisting an empty string as a "manual" definition.
+
+### 8.3 Optional Merriam-Webster source *(added 2026-08-08)*
+
+dictionaryapi.dev (a Wiktionary wrapper) remains the zero-setup default: no
+key, no signup, unchanged behavior for anyone who doesn't opt in. Merriam-
+Webster's Collegiate Dictionary API (free registration at dictionaryapi.com)
+is an opt-in alternative — its senses are curated/ordered by commonality
+rather than Wiktionary's etymological/internal ordering, which is the direct
+fix for "definitions are often the uncommon meaning."
+
+- **Settings UI:** a new "Dictionary source" section in the Data screen
+  (§6.4) — a masked API-key input, Save/Clear buttons, and status text
+  showing which source is currently active. Save performs one lightweight
+  lookup (e.g. the word "test") before accepting the key, so a typo surfaces
+  immediately rather than silently degrading every future import.
+- **Key storage:** its own `localStorage` entry (`beevocab.mwApiKey`),
+  separate from the `VocabDb` envelope (§4) — deliberately **excluded** from
+  `exportDb`/`importBackup` (§6.4). Backups are meant to move between devices
+  or be handed off; a secret shouldn't ride along in that file. The key never
+  leaves the device otherwise (no backend to send it to).
+- **Provider parser:** `parseMwAlternatives(data)` normalizes MW's response
+  into the same `DefinitionAlternative[]` shape §8 already defines (MW
+  returns an array of plain strings, not entry objects, when it only has
+  spelling suggestions for an unmatched word — that shape is treated as "not
+  found," same as dictionaryapi.dev's 404). Because grouping/formatting/UI
+  are already written against that shared shape (§8's adapter pattern), no
+  other code changes when this provider is added.
+- **Fetch chain:** when a key is configured, `fetchOne(word)` tries MW first
+  (with its own §8 429-retry-once applied to just the MW request); if MW
+  still has no result after that (no entry, error, or a second 429), it
+  falls back to dictionaryapi.dev for that same word — same 429-retry-once
+  behavior applied there too — before giving up. Maximizes success rate at
+  the cost of up to one extra request on MW misses. No key configured →
+  behavior is unchanged (dictionaryapi.dev only).
+- **`definitionSource`** stays `'api' | 'manual' | 'none'` — no new value to
+  distinguish which provider actually answered, since nothing in the UI
+  differentiates them today (YAGNI; add one later if that changes).
+- **File layout:** `dictionary.ts` grows a provider seam —
+  `lib/dictionaryProviders/freeDictionary.ts` (existing dictionaryapi.dev
+  logic, moved as-is) and `lib/dictionaryProviders/merriamWebster.ts` (new),
+  each exporting a parser to the shared `DefinitionAlternative[]` shape.
+  `dictionary.ts` itself becomes the orchestrator: fetch sequencing,
+  429 retry/backoff, sense grouping, the provider fallback chain, and MW key
+  load/save/clear. This mirrors the existing `lib/` convention of small,
+  single-purpose, framework-free modules (§3).
+- **Out of scope here:** MW's response also includes recorded-audio
+  pronunciation references — not wired up now (§12 backlog item 1 still
+  covers audio, and can reuse this as its source instead of/alongside
+  `speechSynthesis` when it's picked up).
 
 ## 9. PWA
 
@@ -571,7 +644,8 @@ up a deploy.
 ## 12. P2 backlog (explicitly out of v1)
 
 1. **Audio pronunciation** — speak the word on the card front via
-   `speechSynthesis` (offline-capable).
+   `speechSynthesis` (offline-capable), or via Merriam-Webster's recorded
+   audio (§8.3) if that ships first.
 2. **Manual word entry** — type a word, fetch its definition, commit to box 1.
 3. Automatic same-session re-show of a **missed** word specifically (still
    unimplemented: missing a card still sends it to box 1, due tomorrow, same
@@ -585,6 +659,13 @@ up a deploy.
 6. The pangram/continuation-page ambiguity noted at the end of §7.2 (an
    unpaired pangram word alone on its own line, on a screenshot with no real
    hive row, can be mistaken for one — known, low-frequency, not fixed).
+7. **Bulk re-fetch of definitions for existing words** *(added 2026-08-08)* —
+   many already-imported words are stuck with the empty placeholder or an
+   incomplete/wrong sense from before §8's grouping existed. Wants: a way to
+   flag words for refetch while going through Study (§6.1), and a separate
+   place (likely Data, §6.4) to trigger the actual refetch for everything
+   flagged. Deliberately not designed as part of this spec update — separate
+   follow-up spec.
 
 ## 13. Milestones (implementation-plan seeds)
 
