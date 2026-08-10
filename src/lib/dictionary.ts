@@ -37,6 +37,25 @@ export function formatDefinition(alt: DefinitionAlternative): string {
   return alt.partOfSpeech ? `(${alt.partOfSpeech}) ${alt.definition}` : alt.definition;
 }
 
+function groupTopSensesByPartOfSpeech(
+  alternatives: DefinitionAlternative[],
+  maxGroups = 3,
+): DefinitionAlternative[] {
+  const out: DefinitionAlternative[] = [];
+  const seenPartsOfSpeech = new Set<string>();
+  for (const alt of alternatives) {
+    if (seenPartsOfSpeech.has(alt.partOfSpeech)) continue;
+    seenPartsOfSpeech.add(alt.partOfSpeech);
+    out.push(alt);
+    if (out.length >= maxGroups) break;
+  }
+  return out;
+}
+
+function formatGroupedDefinition(alternatives: DefinitionAlternative[]): string {
+  return alternatives.map(formatDefinition).join('\n\n');
+}
+
 /**
  * Fetches every meaning available for a single word, for a user to browse and pick from when the
  * definition fetchDefinitions() picked turns out to be the wrong sense. Unlike fetchDefinitions(),
@@ -62,8 +81,8 @@ async function fetchOne(word: string, signal: AbortSignal | undefined, retryMs: 
     result = await fetchFreeDictionary(word, signal);
   }
   if (result.status !== 'ok') return NOT_FOUND;
-  const [first] = result.alternatives;
-  return first ? { definition: formatDefinition(first), source: 'api' } : NOT_FOUND;
+  const grouped = groupTopSensesByPartOfSpeech(result.alternatives);
+  return grouped.length > 0 ? { definition: formatGroupedDefinition(grouped), source: 'api' } : NOT_FOUND;
 }
 
 export async function fetchDefinitions(

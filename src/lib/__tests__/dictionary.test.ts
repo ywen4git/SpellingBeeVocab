@@ -4,6 +4,8 @@ import { PLACEHOLDER_DEFINITION } from '../types';
 
 const entry = (pos: string, def: string) =>
   [{ meanings: [{ partOfSpeech: pos, definitions: [{ definition: def }] }] }];
+const multiEntry = (...pairs: Array<[string, string]>) =>
+  [{ meanings: pairs.map(([pos, def]) => ({ partOfSpeech: pos, definitions: [{ definition: def }] })) }];
 const ok = (body: unknown) => ({ ok: true, status: 200, json: async () => body });
 const status = (code: number) => ({ ok: false, status: code, json: async () => ({}) });
 const opts = { gapMs: 0, retryMs: 0 };
@@ -70,6 +72,26 @@ describe('fetchDefinitions', () => {
     await expect(
       fetchDefinitions(['AAAA', 'BBBB'], { ...opts, signal: controller.signal }),
     ).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('groups up to 3 senses, one per distinct part of speech, joined by blank lines', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ok(multiEntry(
+      ['noun', 'A story.'],
+      ['noun', 'A second noun sense, dropped — only the first per part of speech is kept.'],
+      ['adjective', 'New and not previously known.'],
+      ['verb', 'To write as a novel.'],
+      ['interjection', 'A fourth part of speech, dropped — capped at 3 groups.'],
+    ))));
+    const [r] = await fetchDefinitions(['NOVEL'], opts);
+    expect(r.definition).toBe(
+      '(noun) A story.\n\n(adjective) New and not previously known.\n\n(verb) To write as a novel.',
+    );
+  });
+
+  it('keeps a single-sense definition exactly as before (no trailing separators)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ok(entry('noun', 'A fungus.'))));
+    const [r] = await fetchDefinitions(['AGARIC'], opts);
+    expect(r.definition).toBe('(noun) A fungus.');
   });
 });
 
