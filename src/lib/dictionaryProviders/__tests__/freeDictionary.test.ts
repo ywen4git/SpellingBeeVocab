@@ -55,9 +55,9 @@ describe('fetchFreeDictionary', () => {
     expect(await fetchFreeDictionary('TIARA')).toEqual({ status: 'rate-limited' });
   });
 
-  it('maps a network error to error', async () => {
+  it('maps a network error to network-error', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('offline'); }));
-    expect(await fetchFreeDictionary('AGARIC')).toEqual({ status: 'error' });
+    expect(await fetchFreeDictionary('AGARIC')).toEqual({ status: 'network-error' });
   });
 
   it('rethrows AbortError instead of swallowing it', async () => {

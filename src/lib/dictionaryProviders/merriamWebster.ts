@@ -48,6 +48,8 @@ export async function fetchMerriamWebster(
     return alternatives.length > 0 ? { status: 'ok', alternatives } : { status: 'not-found' };
   } catch (err) {
     if (isAbortError(err)) throw err;
-    return { status: 'error' };
+    // The request never reached Merriam-Webster at all (offline, DNS, CORS, etc) — distinct from a
+    // rejected request (bad key), which is a genuine 'error' above.
+    return { status: 'network-error' };
   }
 }

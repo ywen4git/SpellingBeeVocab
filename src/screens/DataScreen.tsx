@@ -8,7 +8,7 @@ import { clearMwApiKey, loadMwApiKey, saveMwApiKey, validateMwApiKey } from '../
 function DictionarySourceSection() {
   const [keyInput, setKeyInput] = useState('');
   const [checking, setChecking] = useState(false);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<'invalid' | 'network-error' | false>(false);
   const [active, setActive] = useState(() => loadMwApiKey() !== null);
 
   const handleSave = async () => {
@@ -16,10 +16,10 @@ function DictionarySourceSection() {
     if (!trimmed) return;
     setChecking(true);
     setError(false);
-    const valid = await validateMwApiKey(trimmed);
+    const result = await validateMwApiKey(trimmed);
     setChecking(false);
-    if (!valid) {
-      setError(true);
+    if (result !== 'valid') {
+      setError(result);
       return;
     }
     saveMwApiKey(trimmed);
@@ -65,7 +65,14 @@ function DictionarySourceSection() {
           >
             {checking ? 'Checking…' : 'Save key'}
           </button>
-          {error && <p className="mt-2 text-xs text-red-500">Couldn't verify that key — check it and try again.</p>}
+          {error === 'invalid' && (
+            <p className="mt-2 text-xs text-red-500">Couldn't verify that key — check it and try again.</p>
+          )}
+          {error === 'network-error' && (
+            <p className="mt-2 text-xs text-red-500">
+              Couldn't reach Merriam-Webster to verify that key — check your connection and try again.
+            </p>
+          )}
         </>
       )}
     </section>

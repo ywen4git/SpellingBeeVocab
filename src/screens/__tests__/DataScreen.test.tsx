@@ -74,7 +74,7 @@ it('defaults to the free dictionary with no key configured', async () => {
 });
 
 it('rejects an invalid Merriam-Webster key without saving it', async () => {
-  vi.mocked(validateMwApiKey).mockResolvedValueOnce(false);
+  vi.mocked(validateMwApiKey).mockResolvedValueOnce('invalid');
   seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
   await openData();
   await userEvent.type(screen.getByPlaceholderText(/merriam-webster api key/i), 'bad-key');
@@ -83,8 +83,19 @@ it('rejects an invalid Merriam-Webster key without saving it', async () => {
   expect(screen.getByText(/using the free dictionary/i)).toBeInTheDocument();
 });
 
+it('reports a connection problem separately from an invalid key when MW is unreachable', async () => {
+  vi.mocked(validateMwApiKey).mockResolvedValueOnce('network-error');
+  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  await openData();
+  await userEvent.type(screen.getByPlaceholderText(/merriam-webster api key/i), 'good-key');
+  await userEvent.click(screen.getByRole('button', { name: /save key/i }));
+  expect(await screen.findByText(/couldn't reach merriam-webster/i)).toBeInTheDocument();
+  expect(screen.queryByText(/couldn't verify that key/i)).not.toBeInTheDocument();
+  expect(screen.getByText(/using the free dictionary/i)).toBeInTheDocument();
+});
+
 it('saves a valid Merriam-Webster key and switches the active source', async () => {
-  vi.mocked(validateMwApiKey).mockResolvedValueOnce(true);
+  vi.mocked(validateMwApiKey).mockResolvedValueOnce('valid');
   seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
   await openData();
   await userEvent.type(screen.getByPlaceholderText(/merriam-webster api key/i), 'good-key');
@@ -94,7 +105,7 @@ it('saves a valid Merriam-Webster key and switches the active source', async () 
 });
 
 it('clears a configured key and reverts to the free dictionary', async () => {
-  vi.mocked(validateMwApiKey).mockResolvedValueOnce(true);
+  vi.mocked(validateMwApiKey).mockResolvedValueOnce('valid');
   seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
   await openData();
   await userEvent.type(screen.getByPlaceholderText(/merriam-webster api key/i), 'good-key');

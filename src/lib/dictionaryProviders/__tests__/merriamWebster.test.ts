@@ -52,9 +52,9 @@ describe('fetchMerriamWebster', () => {
     expect(await fetchMerriamWebster('AGARIC', 'bad-key')).toEqual({ status: 'error' });
   });
 
-  it('maps a network error to error', async () => {
+  it('maps a network error to network-error, distinct from a rejected request (bad key)', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('offline'); }));
-    expect(await fetchMerriamWebster('AGARIC', 'test-key')).toEqual({ status: 'error' });
+    expect(await fetchMerriamWebster('AGARIC', 'test-key')).toEqual({ status: 'network-error' });
   });
 
   it('rethrows AbortError instead of swallowing it', async () => {

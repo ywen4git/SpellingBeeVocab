@@ -95,6 +95,22 @@ describe('fetchDefinitions', () => {
     const [r] = await fetchDefinitions(['AGARIC'], opts);
     expect(r.definition).toBe('(noun) A fungus.');
   });
+
+  it('treats MW\'s transitive/intransitive verb split as one "verb" bucket when grouping, freeing a slot for other parts of speech', async () => {
+    saveMwApiKey('good-key');
+    vi.stubGlobal('fetch', vi.fn(async () => ok([
+      { fl: 'transitive verb', shortdef: ['To move fast, with an object.'] },
+      { fl: 'intransitive verb', shortdef: ['To move fast — same bucket as transitive verb, dropped.'] },
+      { fl: 'noun', shortdef: ['A fast pace.'] },
+      { fl: 'adjective', shortdef: ['Operating rapidly.'] },
+    ])));
+    const [r] = await fetchDefinitions(['RUN'], opts);
+    // Exactly 3 groups, including both noun and adjective — the verb split only cost one slot, not
+    // two — while the specific "(transitive verb)" label (not a normalized "(verb)") is still shown.
+    expect(r.definition).toBe(
+      '(transitive verb) To move fast, with an object.\n\n(noun) A fast pace.\n\n(adjective) Operating rapidly.',
+    );
+  });
 });
 
 describe('fetchAlternateDefinitions', () => {
@@ -151,17 +167,22 @@ describe('Merriam-Webster key storage', () => {
 describe('validateMwApiKey', () => {
   it('is valid when MW answers with a real entry', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ok([{ fl: 'noun', shortdef: ['a check'] }])));
-    expect(await validateMwApiKey('good-key')).toBe(true);
+    expect(await validateMwApiKey('good-key')).toBe('valid');
   });
 
   it('is valid even when MW has no entry for the probe word (key itself was accepted)', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ok(['test', 'tests'])));
-    expect(await validateMwApiKey('good-key')).toBe(true);
+    expect(await validateMwApiKey('good-key')).toBe('valid');
   });
 
   it('is invalid when MW rejects the request (bad key)', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => status(403)));
-    expect(await validateMwApiKey('bad-key')).toBe(false);
+    expect(await validateMwApiKey('bad-key')).toBe('invalid');
+  });
+
+  it('is a network-error, not invalid, when the request never reached MW', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('offline'); }));
+    expect(await validateMwApiKey('good-key')).toBe('network-error');
   });
 });
 

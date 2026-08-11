@@ -40,6 +40,9 @@ export async function fetchFreeDictionary(word: string, signal?: AbortSignal): P
     return alternatives.length > 0 ? { status: 'ok', alternatives } : { status: 'not-found' };
   } catch (err) {
     if (isAbortError(err)) throw err;
-    return { status: 'error' };
+    // The request never reached the server at all (offline, DNS, CORS, etc) — kept distinct from
+    // 'error' for consistency with the Merriam-Webster provider, even though this provider currently
+    // has no other path that produces 'error'.
+    return { status: 'network-error' };
   }
 }

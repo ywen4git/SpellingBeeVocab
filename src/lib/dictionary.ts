@@ -47,16 +47,30 @@ export function clearMwApiKey(): void {
   localStorage.removeItem(MW_API_KEY_STORAGE_KEY);
 }
 
+export type MwKeyValidation = 'valid' | 'invalid' | 'network-error';
+
 /** A well-formed key always gets a 200 from Merriam-Webster (an unknown word is still a 200, just
- * with suggestions instead of entries) — only a rejected request (bad key) maps to 'error'. */
-export async function validateMwApiKey(key: string, signal?: AbortSignal): Promise<boolean> {
+ * with suggestions instead of entries) — only a rejected request (bad key) is 'invalid'. A request
+ * that never reached Merriam-Webster at all (offline, DNS, CORS, etc) is reported separately as
+ * 'network-error' so the caller doesn't tell the user their key is wrong when it's their connection. */
+export async function validateMwApiKey(key: string, signal?: AbortSignal): Promise<MwKeyValidation> {
   const result = await fetchMerriamWebster('test', key, signal);
-  return result.status !== 'error';
+  if (result.status === 'network-error') return 'network-error';
+  return result.status === 'error' ? 'invalid' : 'valid';
 }
 
 /** Formats an alternative the same way fetchDefinitions() formats its chosen definition. */
 export function formatDefinition(alt: DefinitionAlternative): string {
   return alt.partOfSpeech ? `(${alt.partOfSpeech}) ${alt.definition}` : alt.definition;
+}
+
+/** Merriam-Webster splits "verb" into "transitive verb" / "intransitive verb"; dictionaryapi.dev just
+ * uses "verb". For GROUPING purposes only, treat those as the same bucket so a verb-heavy MW word
+ * doesn't burn 2 of the 3 sense slots on transitive/intransitive instead of spreading across other
+ * parts of speech — the pushed alternative keeps its original, unmodified partOfSpeech so the
+ * displayed text still says "(transitive verb) ..." / "(intransitive verb) ...". */
+function groupingKey(partOfSpeech: string): string {
+  return partOfSpeech.replace(/^(transitive|intransitive)\s+/, '');
 }
 
 function groupTopSensesByPartOfSpeech(
@@ -66,8 +80,9 @@ function groupTopSensesByPartOfSpeech(
   const out: DefinitionAlternative[] = [];
   const seenPartsOfSpeech = new Set<string>();
   for (const alt of alternatives) {
-    if (seenPartsOfSpeech.has(alt.partOfSpeech)) continue;
-    seenPartsOfSpeech.add(alt.partOfSpeech);
+    const key = groupingKey(alt.partOfSpeech);
+    if (seenPartsOfSpeech.has(key)) continue;
+    seenPartsOfSpeech.add(key);
     out.push(alt);
     if (out.length >= maxGroups) break;
   }

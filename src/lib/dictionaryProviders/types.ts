@@ -7,4 +7,5 @@ export type ProviderResult =
   | { status: 'ok'; alternatives: DefinitionAlternative[] }
   | { status: 'not-found' }
   | { status: 'rate-limited' }
-  | { status: 'error' };
+  | { status: 'error' }
+  | { status: 'network-error' };
