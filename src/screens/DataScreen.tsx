@@ -3,6 +3,74 @@ import { useVocab } from '../context/VocabProvider';
 import { useToast } from '../components/Toast';
 import { exportDb, mergeDb, parseBackup } from '../lib/storage';
 import type { VocabDb } from '../lib/types';
+import { clearMwApiKey, loadMwApiKey, saveMwApiKey, validateMwApiKey } from '../lib/dictionary';
+
+function DictionarySourceSection() {
+  const [keyInput, setKeyInput] = useState('');
+  const [checking, setChecking] = useState(false);
+  const [error, setError] = useState(false);
+  const [active, setActive] = useState(() => loadMwApiKey() !== null);
+
+  const handleSave = async () => {
+    const trimmed = keyInput.trim();
+    if (!trimmed) return;
+    setChecking(true);
+    setError(false);
+    const valid = await validateMwApiKey(trimmed);
+    setChecking(false);
+    if (!valid) {
+      setError(true);
+      return;
+    }
+    saveMwApiKey(trimmed);
+    setKeyInput('');
+    setActive(true);
+  };
+
+  const handleClear = () => {
+    clearMwApiKey();
+    setActive(false);
+    setKeyInput('');
+    setError(false);
+  };
+
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-4">
+      <h2 className="mb-2 text-sm font-bold text-slate-700">Dictionary source</h2>
+      <p className="mb-3 text-xs text-slate-400">
+        {active
+          ? 'Using Merriam-Webster for new definitions.'
+          : 'Using the free dictionary (default). Add a Merriam-Webster API key for definitions ordered by common usage.'}
+      </p>
+      {active ? (
+        <button
+          onClick={handleClear}
+          className="w-full min-h-[44px] rounded-xl bg-slate-200 py-2 text-sm font-semibold"
+        >
+          Remove key, use free dictionary
+        </button>
+      ) : (
+        <>
+          <input
+            type="password"
+            value={keyInput}
+            onChange={(e) => setKeyInput(e.target.value)}
+            placeholder="Merriam-Webster API key"
+            className="mb-2 w-full min-h-[44px] rounded-xl border border-slate-300 px-3 py-2 text-sm"
+          />
+          <button
+            onClick={handleSave}
+            disabled={checking || !keyInput.trim()}
+            className="w-full min-h-[44px] rounded-xl bg-amber-400 py-2 font-semibold disabled:opacity-40"
+          >
+            {checking ? 'Checking…' : 'Save key'}
+          </button>
+          {error && <p className="mt-2 text-xs text-red-500">Couldn't verify that key — check it and try again.</p>}
+        </>
+      )}
+    </section>
+  );
+}
 
 export default function DataScreen() {
   const { db, importBackup, resetDb } = useVocab();
@@ -65,6 +133,8 @@ export default function DataScreen() {
           Box 1: {perBox(1)} · Box 2: {perBox(2)} · Box 3: {perBox(3)}
         </p>
       </section>
+
+      <DictionarySourceSection />
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
         <h2 className="mb-2 text-sm font-bold text-slate-700">Backup</h2>

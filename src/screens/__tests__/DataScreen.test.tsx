@@ -1,10 +1,17 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { vi } from 'vitest';
 import App from '../../App';
 import { DB_KEY } from '../../lib/storage';
 import { newWordEntry } from '../../lib/leitner';
 import { SCHEMA_VERSION } from '../../lib/types';
 import type { VocabWord } from '../../lib/types';
+import { validateMwApiKey } from '../../lib/dictionary';
+
+vi.mock('../../lib/dictionary', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/dictionary')>()),
+  validateMwApiKey: vi.fn(),
+}));
 
 function seed(...words: VocabWord[]) {
   localStorage.setItem(DB_KEY, JSON.stringify({
@@ -58,4 +65,41 @@ it('reset requires typing DELETE', async () => {
   expect(btn).toBeEnabled();
   await userEvent.click(btn);
   expect(JSON.parse(localStorage.getItem(DB_KEY)!).words).toEqual({});
+});
+
+it('defaults to the free dictionary with no key configured', async () => {
+  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  await openData();
+  expect(screen.getByText(/using the free dictionary/i)).toBeInTheDocument();
+});
+
+it('rejects an invalid Merriam-Webster key without saving it', async () => {
+  vi.mocked(validateMwApiKey).mockResolvedValueOnce(false);
+  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  await openData();
+  await userEvent.type(screen.getByPlaceholderText(/merriam-webster api key/i), 'bad-key');
+  await userEvent.click(screen.getByRole('button', { name: /save key/i }));
+  expect(await screen.findByText(/couldn't verify that key/i)).toBeInTheDocument();
+  expect(screen.getByText(/using the free dictionary/i)).toBeInTheDocument();
+});
+
+it('saves a valid Merriam-Webster key and switches the active source', async () => {
+  vi.mocked(validateMwApiKey).mockResolvedValueOnce(true);
+  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  await openData();
+  await userEvent.type(screen.getByPlaceholderText(/merriam-webster api key/i), 'good-key');
+  await userEvent.click(screen.getByRole('button', { name: /save key/i }));
+  expect(await screen.findByText(/using merriam-webster/i)).toBeInTheDocument();
+  expect(screen.queryByPlaceholderText(/merriam-webster api key/i)).not.toBeInTheDocument();
+});
+
+it('clears a configured key and reverts to the free dictionary', async () => {
+  vi.mocked(validateMwApiKey).mockResolvedValueOnce(true);
+  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  await openData();
+  await userEvent.type(screen.getByPlaceholderText(/merriam-webster api key/i), 'good-key');
+  await userEvent.click(screen.getByRole('button', { name: /save key/i }));
+  await screen.findByText(/using merriam-webster/i);
+  await userEvent.click(screen.getByRole('button', { name: /remove key/i }));
+  expect(screen.getByText(/using the free dictionary/i)).toBeInTheDocument();
 });
