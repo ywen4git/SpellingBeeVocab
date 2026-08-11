@@ -62,7 +62,7 @@ export function DefinitionEditor({
       {alternatives.status === 'loaded' && (
         <ul className="flex flex-col gap-1 rounded-xl border border-slate-200 bg-slate-50 p-2">
           {alternatives.options
-            .filter((alt) => formatDefinition(alt) !== text.trim())
+            .filter((alt) => !text.includes(formatDefinition(alt)))
             .map((alt) => {
               const formatted = formatDefinition(alt);
               return (

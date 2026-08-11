@@ -115,6 +115,26 @@ it('lets the user preview and swap in an alternate dictionary definition', async
   });
 });
 
+it('filters an already-shown sense out of a multi-sense definition, keeping the rest', async () => {
+  seed(newWordEntry('AGARIC', '(noun) A fungus.\n\n(verb) To forage.', 'api', 1));
+  vi.stubGlobal('fetch', vi.fn(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => [{
+      meanings: [
+        { partOfSpeech: 'noun', definitions: [{ definition: 'A fungus.' }] },
+        { partOfSpeech: 'adjective', definitions: [{ definition: 'Fungal in nature.' }] },
+      ],
+    }],
+  })));
+  await openWords();
+  await userEvent.click(screen.getByRole('button', { name: /AGARIC/ }));
+  await userEvent.click(screen.getByRole('button', { name: /edit definition/i }));
+  await userEvent.click(screen.getByRole('button', { name: /see other dictionary definitions/i }));
+  await screen.findByText('(adjective) Fungal in nature.');
+  expect(screen.queryByText('(noun) A fungus.')).not.toBeInTheDocument();
+});
+
 it('shows a message when no other definitions are found', async () => {
   seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
   vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, json: async () => ({}) })));
