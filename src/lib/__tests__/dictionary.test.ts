@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchAlternateDefinitions, fetchDefinitions } from '../dictionary';
+import {
+  clearMwApiKey, fetchAlternateDefinitions, fetchDefinitions, loadMwApiKey, saveMwApiKey, validateMwApiKey,
+} from '../dictionary';
 import { PLACEHOLDER_DEFINITION } from '../types';
 
 const entry = (pos: string, def: string) =>
@@ -133,5 +135,96 @@ describe('fetchAlternateDefinitions', () => {
       throw new DOMException('Aborted', 'AbortError');
     }));
     await expect(fetchAlternateDefinitions('AGARIC')).rejects.toMatchObject({ name: 'AbortError' });
+  });
+});
+
+describe('Merriam-Webster key storage', () => {
+  it('round-trips through save/load/clear', () => {
+    expect(loadMwApiKey()).toBeNull();
+    saveMwApiKey('abc123');
+    expect(loadMwApiKey()).toBe('abc123');
+    clearMwApiKey();
+    expect(loadMwApiKey()).toBeNull();
+  });
+});
+
+describe('validateMwApiKey', () => {
+  it('is valid when MW answers with a real entry', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ok([{ fl: 'noun', shortdef: ['a check'] }])));
+    expect(await validateMwApiKey('good-key')).toBe(true);
+  });
+
+  it('is valid even when MW has no entry for the probe word (key itself was accepted)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ok(['test', 'tests'])));
+    expect(await validateMwApiKey('good-key')).toBe(true);
+  });
+
+  it('is invalid when MW rejects the request (bad key)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => status(403)));
+    expect(await validateMwApiKey('bad-key')).toBe(false);
+  });
+});
+
+describe('fetchDefinitions with a Merriam-Webster key configured', () => {
+  it('uses Merriam-Webster when it has the word', async () => {
+    saveMwApiKey('good-key');
+    vi.stubGlobal('fetch', vi.fn(async () => ok([{ fl: 'noun', shortdef: ['A crown.'] }])));
+    const [r] = await fetchDefinitions(['TIARA'], opts);
+    expect(r).toEqual({ word: 'TIARA', definition: '(noun) A crown.', source: 'api' });
+    expect(fetch).toHaveBeenCalledWith(
+      'https://www.dictionaryapi.com/api/v3/references/collegiate/json/tiara?key=good-key',
+      expect.anything(),
+    );
+  });
+
+  it('falls back to dictionaryapi.dev when Merriam-Webster has no entry', async () => {
+    saveMwApiKey('good-key');
+    const f = vi.fn()
+      .mockResolvedValueOnce(ok(['tiaras'])) // MW: suggestions only, not found
+      .mockResolvedValueOnce(ok(entry('noun', 'A crown (free dictionary).')));
+    vi.stubGlobal('fetch', f);
+    const [r] = await fetchDefinitions(['TIARA'], opts);
+    expect(r).toEqual({ word: 'TIARA', definition: '(noun) A crown (free dictionary).', source: 'api' });
+    expect(f).toHaveBeenNthCalledWith(1, expect.stringContaining('dictionaryapi.com'), expect.anything());
+    expect(f).toHaveBeenNthCalledWith(2, expect.stringContaining('dictionaryapi.dev'), expect.anything());
+  });
+
+  it('retries a rate-limited Merriam-Webster request before falling back', async () => {
+    saveMwApiKey('good-key');
+    const f = vi.fn()
+      .mockResolvedValueOnce(status(429))
+      .mockResolvedValueOnce(ok([{ fl: 'noun', shortdef: ['A crown.'] }]));
+    vi.stubGlobal('fetch', f);
+    const [r] = await fetchDefinitions(['TIARA'], opts);
+    expect(f).toHaveBeenCalledTimes(2);
+    expect(r.source).toBe('api');
+  });
+
+  it('does not call Merriam-Webster when no key is configured', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ok(entry('noun', 'A crown.'))));
+    await fetchDefinitions(['TIARA'], opts);
+    expect(fetch).toHaveBeenCalledWith(expect.stringContaining('dictionaryapi.dev'), expect.anything());
+  });
+});
+
+describe('fetchAlternateDefinitions with a Merriam-Webster key configured', () => {
+  it('uses Merriam-Webster when it has the word', async () => {
+    saveMwApiKey('good-key');
+    vi.stubGlobal('fetch', vi.fn(async () => ok([{ fl: 'noun', shortdef: ['A fungus.', 'A basket.'] }])));
+    const alts = await fetchAlternateDefinitions('AGARIC');
+    expect(alts).toEqual([
+      { partOfSpeech: 'noun', definition: 'A fungus.' },
+      { partOfSpeech: 'noun', definition: 'A basket.' },
+    ]);
+  });
+
+  it('falls back to dictionaryapi.dev when Merriam-Webster has no entry', async () => {
+    saveMwApiKey('good-key');
+    const f = vi.fn()
+      .mockResolvedValueOnce(ok(['agarics']))
+      .mockResolvedValueOnce(ok(entry('noun', 'A fungus (free dictionary).')));
+    vi.stubGlobal('fetch', f);
+    const alts = await fetchAlternateDefinitions('AGARIC');
+    expect(alts).toEqual([{ partOfSpeech: 'noun', definition: 'A fungus (free dictionary).' }]);
   });
 });
