@@ -203,6 +203,7 @@ describe('fetchDefinitions with a Merriam-Webster key configured', () => {
   it('does not call Merriam-Webster when no key is configured', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ok(entry('noun', 'A crown.'))));
     await fetchDefinitions(['TIARA'], opts);
+    expect(fetch).toHaveBeenCalledTimes(1);
     expect(fetch).toHaveBeenCalledWith(expect.stringContaining('dictionaryapi.dev'), expect.anything());
   });
 });
