@@ -21,6 +21,7 @@ interface VocabContextValue {
   commitImport: (sel: ImportSelection) => void;
   gradeWord: (word: string, gotIt: boolean) => void;
   editDefinition: (word: string, definition: string) => void;
+  applyFetchedDefinition: (word: string, result: DefinitionResult) => void;
   deleteWord: (word: string) => void;
   unmasterWord: (word: string) => void;
   importBackup: (incoming: VocabDb) => void;
@@ -82,6 +83,16 @@ export function VocabProvider({ children }: { children: ReactNode }) {
           ...w, definition: PLACEHOLDER_DEFINITION, definitionSource: 'none',
           manuallyEdited: false, definitionUpdatedAt: null,
         }));
+    },
+    applyFetchedDefinition: (word, result) => {
+      if (result.source === 'none') return; // still missing — leave the word untouched
+      updateWord(word, (w) => ({
+        ...w,
+        definition: result.definition,
+        definitionSource: result.source,
+        manuallyEdited: false,
+        definitionUpdatedAt: Date.now(),
+      }));
     },
     deleteWord: (word) =>
       setDb((prev) => {

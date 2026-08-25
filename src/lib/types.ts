@@ -30,3 +30,7 @@ export const PLACEHOLDER_DEFINITION = 'No definition found — tap to edit.';
 export function emptyDb(): VocabDb {
   return { schemaVersion: SCHEMA_VERSION, words: {} };
 }
+
+export function hasNoDefinition(w: VocabWord): boolean {
+  return w.definition === PLACEHOLDER_DEFINITION;
+}

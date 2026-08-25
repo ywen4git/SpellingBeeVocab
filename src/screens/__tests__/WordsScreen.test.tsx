@@ -207,3 +207,46 @@ it('omits the updated date when a definition has never been fetched or edited', 
   await userEvent.click(screen.getByRole('button', { name: /AGARIC/ }));
   expect(screen.queryByText(/Updated/)).not.toBeInTheDocument();
 });
+
+it('offers to fix missing definitions and reports success/failure counts', async () => {
+  seed(
+    newWordEntry('AGARIC', PLACEHOLDER_DEFINITION, 'none', 1),
+    newWordEntry('TIARA', PLACEHOLDER_DEFINITION, 'none', 2),
+    newWordEntry('NUANCE', 'already has one', 'free-dictionary', 3),
+  );
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.includes('agaric')) {
+      return {
+        ok: true, status: 200,
+        json: async () => [{ meanings: [{ partOfSpeech: 'noun', definitions: [{ definition: 'A fungus.' }] }] }],
+      };
+    }
+    return { ok: false, status: 404, json: async () => ({}) };
+  }));
+  await openWords();
+  await userEvent.click(screen.getByRole('button', { name: /fix 2 missing definitions/i }));
+  await userEvent.click(screen.getByRole('button', { name: /fetch 2 selected/i }));
+  expect(await screen.findByRole('status')).toHaveTextContent('1 updated, 1 failed');
+  const stored = JSON.parse(localStorage.getItem(DB_KEY)!);
+  expect(stored.words.AGARIC).toMatchObject({ definition: '(noun) A fungus.', definitionSource: 'free-dictionary' });
+  expect(stored.words.TIARA).toMatchObject({ definitionSource: 'none' });
+});
+
+it('lets the user deselect a word before bulk-fetching', async () => {
+  seed(
+    newWordEntry('AGARIC', PLACEHOLDER_DEFINITION, 'none', 1),
+    newWordEntry('TIARA', PLACEHOLDER_DEFINITION, 'none', 2),
+  );
+  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, json: async () => ({}) })));
+  await openWords();
+  await userEvent.click(screen.getByRole('button', { name: /fix 2 missing definitions/i }));
+  await userEvent.click(screen.getByRole('checkbox', { name: /tiara/i }));
+  await userEvent.click(screen.getByRole('button', { name: /fetch 1 selected/i }));
+  expect(await screen.findByRole('status')).toHaveTextContent('0 updated, 1 failed');
+});
+
+it('does not show the bulk-fix button when nothing is missing', async () => {
+  seed(newWordEntry('AGARIC', 'a mushroom', 'free-dictionary', 1));
+  await openWords();
+  expect(screen.queryByRole('button', { name: /fix.*missing definition/i })).not.toBeInTheDocument();
+});

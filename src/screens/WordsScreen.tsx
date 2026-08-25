@@ -3,6 +3,9 @@ import { useVocab } from '../context/VocabProvider';
 import { DefinitionEditor } from '../components/DefinitionEditor';
 import { formatDate } from '../lib/format';
 import type { VocabWord } from '../lib/types';
+import { useToast } from '../components/Toast';
+import { fetchDefinitions } from '../lib/dictionary';
+import { hasNoDefinition } from '../lib/types';
 
 type Filter = 'all' | 'learning' | 'mastered';
 
@@ -18,12 +21,15 @@ function badgeFor(w: VocabWord): { dot: string; label: string } | null {
 }
 
 export default function WordsScreen() {
-  const { db, deleteWord, unmasterWord } = useVocab();
+  const { db, deleteWord, unmasterWord, applyFetchedDefinition } = useVocab();
+  const toast = useToast();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [expanded, setExpanded] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [bulkSelection, setBulkSelection] = useState<Set<string> | null>(null);
+  const [bulkFetching, setBulkFetching] = useState<{ done: number; total: number } | null>(null);
 
   const open = (word: string) => {
     setExpanded(expanded === word ? null : word);
@@ -31,10 +37,88 @@ export default function WordsScreen() {
     setConfirmingDelete(false);
   };
 
-  const rows = Object.values(db.words)
+  const startBulk = () => setBulkSelection(new Set(missingWords.map((w) => w.word)));
+
+  const toggleBulk = (word: string) => {
+    setBulkSelection((prev) => {
+      if (!prev) return prev;
+      const next = new Set(prev);
+      if (next.has(word)) next.delete(word); else next.add(word);
+      return next;
+    });
+  };
+
+  const runBulkFetch = async () => {
+    if (!bulkSelection) return;
+    const words = [...bulkSelection];
+    setBulkFetching({ done: 0, total: words.length });
+    const results = await fetchDefinitions(words, {
+      onProgress: (done, total) => setBulkFetching({ done, total }),
+    });
+    for (const r of results) applyFetchedDefinition(r.word, r);
+    const succeeded = results.filter((r) => r.source !== 'none').length;
+    toast.show(`${succeeded} updated, ${results.length - succeeded} failed`);
+    setBulkFetching(null);
+    setBulkSelection(null);
+  };
+
+  const allWords = Object.values(db.words);
+  const missingWords = allWords.filter(hasNoDefinition);
+
+  const rows = allWords
     .filter((w) => filter === 'all' || w.status === filter)
     .filter((w) => w.word.includes(query.trim().toUpperCase()))
     .sort((a, b) => a.word.localeCompare(b.word));
+
+  if (bulkSelection) {
+    return (
+      <div className="flex flex-col gap-3">
+        <h2 className="text-lg font-bold">Fix missing definitions</h2>
+        {bulkFetching ? (
+          <p className="text-sm text-amber-600">
+            Fetching definitions… {bulkFetching.done}/{bulkFetching.total}
+          </p>
+        ) : (
+          <>
+            <ul className="flex flex-col gap-2">
+              {missingWords.map((w) => (
+                <li
+                  key={w.word}
+                  className="flex min-h-[44px] items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4"
+                >
+                  <input
+                    type="checkbox"
+                    id={`bulk-${w.word}`}
+                    checked={bulkSelection.has(w.word)}
+                    onChange={() => toggleBulk(w.word)}
+                    className="h-5 w-5 accent-amber-500"
+                  />
+                  <label htmlFor={`bulk-${w.word}`} className="flex min-h-[44px] flex-1 items-center font-semibold">
+                    {w.word}
+                  </label>
+                </li>
+              ))}
+            </ul>
+            <div className="grid grid-cols-2 gap-4">
+              <button
+                onClick={() => setBulkSelection(null)}
+                className="min-h-[44px] rounded-xl bg-slate-200 py-3 font-semibold"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={runBulkFetch}
+                disabled={bulkSelection.size === 0}
+                className="min-h-[44px] rounded-xl bg-amber-400 py-3 font-semibold disabled:opacity-50"
+              >
+                Fetch {bulkSelection.size} selected
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-3">
@@ -61,6 +145,15 @@ export default function WordsScreen() {
           </button>
         ))}
       </div>
+
+      {missingWords.length > 0 && (
+        <button
+          onClick={startBulk}
+          className="min-h-[44px] rounded-xl bg-amber-100 px-3 py-2 text-sm font-semibold text-amber-700"
+        >
+          Fix {missingWords.length} missing {missingWords.length === 1 ? 'definition' : 'definitions'}
+        </button>
+      )}
 
       {rows.length === 0 && (
         <p className="py-8 text-center text-sm text-slate-400">No words here yet.</p>
