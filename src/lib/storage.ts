@@ -1,4 +1,4 @@
-import type { VocabDb } from './types';
+import type { DefinitionSource, VocabDb } from './types';
 import { emptyDb, SCHEMA_VERSION } from './types';
 import { knownWordEntry, newWordEntry } from './leitner';
 
@@ -47,13 +47,13 @@ function readLegacy(now: number): VocabDb | null {
     for (const item of data.new) {
       if (typeof item.word !== 'string') continue;
       db.words[item.word] = newWordEntry(
-        item.word, typeof item.definition === 'string' ? item.definition : '', 'api', now,
+        item.word, typeof item.definition === 'string' ? item.definition : '', 'free-dictionary', now,
       );
     }
     for (const item of data.mastered) {
       if (typeof item.word !== 'string') continue;
       db.words[item.word] = knownWordEntry(
-        item.word, typeof item.definition === 'string' ? item.definition : '', 'api', now,
+        item.word, typeof item.definition === 'string' ? item.definition : '', 'free-dictionary', now,
       );
     }
     return db;
@@ -75,6 +75,22 @@ export function exportDb(db: VocabDb): string {
   return JSON.stringify(db, null, 2);
 }
 
+/**
+ * v1 predates manuallyEdited/definitionUpdatedAt and the provider-specific DefinitionSource.
+ * v1 'api' meant "fetched, from whichever source existed then" — always the free dictionary,
+ * since Merriam-Webster support postdates every pre-migration word, so this is accurate, not a
+ * guess, for real installs. v1 'manual' meant a hand-edit whose original fetched source (if any)
+ * isn't recoverable, so it maps to source 'none'. definitionUpdatedAt is backfilled to addedAt in
+ * every case (best available approximation — the true last-update time isn't recoverable either).
+ */
+function migrateWordV1ToV2(w: Record<string, unknown>): Record<string, unknown> {
+  const v1Source = w.definitionSource;
+  const definitionSource: DefinitionSource = v1Source === 'api' ? 'free-dictionary' : 'none';
+  const manuallyEdited = v1Source === 'manual';
+  const addedAt = typeof w.addedAt === 'number' ? w.addedAt : 0;
+  return { ...w, definitionSource, manuallyEdited, definitionUpdatedAt: addedAt };
+}
+
 export function parseBackup(text: string): VocabDb | null {
   let data: unknown;
   try {
@@ -84,9 +100,10 @@ export function parseBackup(text: string): VocabDb | null {
   }
   if (typeof data !== 'object' || data === null) return null;
   const d = data as Record<string, unknown>;
-  if (d.schemaVersion !== SCHEMA_VERSION) return null;
+  if (d.schemaVersion !== 1 && d.schemaVersion !== SCHEMA_VERSION) return null;
   if (typeof d.words !== 'object' || d.words === null || Array.isArray(d.words)) return null;
-  for (const entry of Object.values(d.words as Record<string, unknown>)) {
+  const rawWords = d.words as Record<string, unknown>;
+  for (const entry of Object.values(rawWords)) {
     const w = entry as Record<string, unknown> | null;
     if (
       w === null || typeof w.word !== 'string' ||
@@ -94,6 +111,12 @@ export function parseBackup(text: string): VocabDb | null {
     ) {
       return null;
     }
+  }
+  if (d.schemaVersion === 1) {
+    const words = Object.fromEntries(
+      Object.entries(rawWords).map(([key, w]) => [key, migrateWordV1ToV2(w as Record<string, unknown>)]),
+    );
+    return { schemaVersion: SCHEMA_VERSION, words } as unknown as VocabDb;
   }
   return data as VocabDb;
 }

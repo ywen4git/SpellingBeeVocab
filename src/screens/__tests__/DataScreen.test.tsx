@@ -26,7 +26,7 @@ async function openData() {
 }
 
 it('rejects an invalid backup file', async () => {
-  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  seed(newWordEntry('AGARIC', 'a mushroom', 'free-dictionary', 1));
   await openData();
   const bad = new File(['{"nope":true}'], 'bad.json', { type: 'application/json' });
   await userEvent.upload(screen.getByLabelText(/import backup/i), bad);
@@ -35,11 +35,11 @@ it('rejects an invalid backup file', async () => {
 });
 
 it('previews and applies a backup merge', async () => {
-  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  seed(newWordEntry('AGARIC', 'a mushroom', 'free-dictionary', 1));
   await openData();
   const backup = {
     schemaVersion: SCHEMA_VERSION,
-    words: { TIARA: newWordEntry('TIARA', 'a crown', 'api', 2) },
+    words: { TIARA: newWordEntry('TIARA', 'a crown', 'free-dictionary', 2) },
   };
   const file = new File([JSON.stringify(backup)], 'backup.json', { type: 'application/json' });
   await userEvent.upload(screen.getByLabelText(/import backup/i), file);
@@ -51,13 +51,13 @@ it('previews and applies a backup merge', async () => {
 });
 
 it('shows a build info footer with the commit and build date', async () => {
-  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  seed(newWordEntry('AGARIC', 'a mushroom', 'free-dictionary', 1));
   await openData();
   expect(screen.getByText(new RegExp(`Build ${__COMMIT_SHA__} · ${__BUILD_TIME__.slice(0, 10)}`))).toBeInTheDocument();
 });
 
 it('reset requires typing DELETE', async () => {
-  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  seed(newWordEntry('AGARIC', 'a mushroom', 'free-dictionary', 1));
   await openData();
   const btn = screen.getByRole('button', { name: /reset everything/i });
   expect(btn).toBeDisabled();
@@ -68,14 +68,14 @@ it('reset requires typing DELETE', async () => {
 });
 
 it('defaults to the free dictionary with no key configured', async () => {
-  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  seed(newWordEntry('AGARIC', 'a mushroom', 'free-dictionary', 1));
   await openData();
   expect(screen.getByText(/using the free dictionary/i)).toBeInTheDocument();
 });
 
 it('rejects an invalid Merriam-Webster key without saving it', async () => {
   vi.mocked(validateMwApiKey).mockResolvedValueOnce('invalid');
-  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  seed(newWordEntry('AGARIC', 'a mushroom', 'free-dictionary', 1));
   await openData();
   await userEvent.type(screen.getByPlaceholderText(/merriam-webster api key/i), 'bad-key');
   await userEvent.click(screen.getByRole('button', { name: /save key/i }));
@@ -85,7 +85,7 @@ it('rejects an invalid Merriam-Webster key without saving it', async () => {
 
 it('reports a connection problem separately from an invalid key when MW is unreachable', async () => {
   vi.mocked(validateMwApiKey).mockResolvedValueOnce('network-error');
-  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  seed(newWordEntry('AGARIC', 'a mushroom', 'free-dictionary', 1));
   await openData();
   await userEvent.type(screen.getByPlaceholderText(/merriam-webster api key/i), 'good-key');
   await userEvent.click(screen.getByRole('button', { name: /save key/i }));
@@ -96,7 +96,7 @@ it('reports a connection problem separately from an invalid key when MW is unrea
 
 it('saves a valid Merriam-Webster key and switches the active source', async () => {
   vi.mocked(validateMwApiKey).mockResolvedValueOnce('valid');
-  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  seed(newWordEntry('AGARIC', 'a mushroom', 'free-dictionary', 1));
   await openData();
   await userEvent.type(screen.getByPlaceholderText(/merriam-webster api key/i), 'good-key');
   await userEvent.click(screen.getByRole('button', { name: /save key/i }));
@@ -106,7 +106,7 @@ it('saves a valid Merriam-Webster key and switches the active source', async () 
 
 it('clears a configured key and reverts to the free dictionary', async () => {
   vi.mocked(validateMwApiKey).mockResolvedValueOnce('valid');
-  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  seed(newWordEntry('AGARIC', 'a mushroom', 'free-dictionary', 1));
   await openData();
   await userEvent.type(screen.getByPlaceholderText(/merriam-webster api key/i), 'good-key');
   await userEvent.click(screen.getByRole('button', { name: /save key/i }));

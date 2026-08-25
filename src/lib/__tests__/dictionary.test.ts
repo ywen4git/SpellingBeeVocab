@@ -18,7 +18,7 @@ describe('fetchDefinitions', () => {
   it('extracts the first definition, prefixed with part of speech', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ok(entry('noun', 'A fungus.'))));
     const [r] = await fetchDefinitions(['AGARIC'], opts);
-    expect(r).toEqual({ word: 'AGARIC', definition: '(noun) A fungus.', source: 'api' });
+    expect(r).toEqual({ word: 'AGARIC', definition: '(noun) A fungus.', source: 'free-dictionary' });
     expect(fetch).toHaveBeenCalledWith(
       'https://api.dictionaryapi.dev/api/v2/entries/en/agaric',
       expect.anything(),
@@ -38,7 +38,7 @@ describe('fetchDefinitions', () => {
     vi.stubGlobal('fetch', f);
     const [r] = await fetchDefinitions(['TIARA'], opts);
     expect(f).toHaveBeenCalledTimes(2);
-    expect(r.source).toBe('api');
+    expect(r.source).toBe('free-dictionary');
   });
 
   it('a second 429 becomes not-found', async () => {
@@ -55,7 +55,7 @@ describe('fetchDefinitions', () => {
     vi.stubGlobal('fetch', f);
     const rs = await fetchDefinitions(['XYZZY', 'TIARA'], opts);
     expect(rs[0].source).toBe('none');
-    expect(rs[1].source).toBe('api');
+    expect(rs[1].source).toBe('free-dictionary');
   });
 
   it('reports progress after each word', async () => {
@@ -191,7 +191,7 @@ describe('fetchDefinitions with a Merriam-Webster key configured', () => {
     saveMwApiKey('good-key');
     vi.stubGlobal('fetch', vi.fn(async () => ok([{ fl: 'noun', shortdef: ['A crown.'] }])));
     const [r] = await fetchDefinitions(['TIARA'], opts);
-    expect(r).toEqual({ word: 'TIARA', definition: '(noun) A crown.', source: 'api' });
+    expect(r).toEqual({ word: 'TIARA', definition: '(noun) A crown.', source: 'merriam-webster' });
     expect(fetch).toHaveBeenCalledWith(
       'https://www.dictionaryapi.com/api/v3/references/collegiate/json/tiara?key=good-key',
       expect.anything(),
@@ -205,7 +205,7 @@ describe('fetchDefinitions with a Merriam-Webster key configured', () => {
       .mockResolvedValueOnce(ok(entry('noun', 'A crown (free dictionary).')));
     vi.stubGlobal('fetch', f);
     const [r] = await fetchDefinitions(['TIARA'], opts);
-    expect(r).toEqual({ word: 'TIARA', definition: '(noun) A crown (free dictionary).', source: 'api' });
+    expect(r).toEqual({ word: 'TIARA', definition: '(noun) A crown (free dictionary).', source: 'free-dictionary' });
     expect(f).toHaveBeenNthCalledWith(1, expect.stringContaining('dictionaryapi.com'), expect.anything());
     expect(f).toHaveBeenNthCalledWith(2, expect.stringContaining('dictionaryapi.dev'), expect.anything());
   });
@@ -218,7 +218,7 @@ describe('fetchDefinitions with a Merriam-Webster key configured', () => {
     vi.stubGlobal('fetch', f);
     const [r] = await fetchDefinitions(['TIARA'], opts);
     expect(f).toHaveBeenCalledTimes(2);
-    expect(r.source).toBe('api');
+    expect(r.source).toBe('merriam-webster');
   });
 
   it('does not call Merriam-Webster when no key is configured', async () => {

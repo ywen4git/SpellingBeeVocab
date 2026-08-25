@@ -2,14 +2,14 @@ import { abortError } from './abortError';
 import { fetchFreeDictionary } from './dictionaryProviders/freeDictionary';
 import { fetchMerriamWebster } from './dictionaryProviders/merriamWebster';
 import type { DefinitionAlternative } from './dictionaryProviders/types';
-import { PLACEHOLDER_DEFINITION } from './types';
+import { PLACEHOLDER_DEFINITION, type DefinitionSource } from './types';
 
 export type { DefinitionAlternative };
 
 export interface DefinitionResult {
   word: string;
   definition: string;
-  source: 'api' | 'none';
+  source: DefinitionSource;
 }
 
 export interface FetchOptions {
@@ -112,7 +112,7 @@ export async function fetchAlternateDefinitions(
   return freeResult.status === 'ok' ? freeResult.alternatives : [];
 }
 
-interface Attempt { definition: string; source: 'api' | 'none' }
+interface Attempt { definition: string; source: DefinitionSource }
 
 const NOT_FOUND: Attempt = { definition: PLACEHOLDER_DEFINITION, source: 'none' };
 
@@ -135,13 +135,13 @@ async function fetchOne(word: string, signal: AbortSignal | undefined, retryMs: 
     const mwResult = await fetchWithRetry(() => fetchMerriamWebster(word, mwKey, signal), signal, retryMs);
     if (mwResult.status === 'ok') {
       const grouped = groupTopSensesByPartOfSpeech(mwResult.alternatives);
-      if (grouped.length > 0) return { definition: formatGroupedDefinition(grouped), source: 'api' };
+      if (grouped.length > 0) return { definition: formatGroupedDefinition(grouped), source: 'merriam-webster' };
     }
   }
   const freeResult = await fetchWithRetry(() => fetchFreeDictionary(word, signal), signal, retryMs);
   if (freeResult.status !== 'ok') return NOT_FOUND;
   const grouped = groupTopSensesByPartOfSpeech(freeResult.alternatives);
-  return grouped.length > 0 ? { definition: formatGroupedDefinition(grouped), source: 'api' } : NOT_FOUND;
+  return grouped.length > 0 ? { definition: formatGroupedDefinition(grouped), source: 'free-dictionary' } : NOT_FOUND;
 }
 
 export async function fetchDefinitions(

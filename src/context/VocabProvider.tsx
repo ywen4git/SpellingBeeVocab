@@ -77,8 +77,11 @@ export function VocabProvider({ children }: { children: ReactNode }) {
     editDefinition: (word, definition) => {
       const trimmed = definition.trim();
       return updateWord(word, (w) => (trimmed
-        ? { ...w, definition: trimmed, definitionSource: 'manual' }
-        : { ...w, definition: PLACEHOLDER_DEFINITION, definitionSource: 'none' }));
+        ? { ...w, definition: trimmed, manuallyEdited: true, definitionUpdatedAt: Date.now() }
+        : {
+          ...w, definition: PLACEHOLDER_DEFINITION, definitionSource: 'none',
+          manuallyEdited: false, definitionUpdatedAt: null,
+        }));
     },
     deleteWord: (word) =>
       setDb((prev) => {

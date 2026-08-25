@@ -14,11 +14,19 @@ export function nextDayBoundary(now: number, days: number): number {
   ).getTime();
 }
 
+/** A freshly created word has never been hand-edited; it only has a real definitionUpdatedAt if a
+ * fetch actually produced content — 'none' means it's still the placeholder. */
+function initialDefinitionUpdatedAt(definitionSource: DefinitionSource, now: number): number | null {
+  return definitionSource === 'none' ? null : now;
+}
+
 export function newWordEntry(
   word: string, definition: string, definitionSource: DefinitionSource, now: number,
 ): VocabWord {
   return {
     word, definition, definitionSource,
+    manuallyEdited: false,
+    definitionUpdatedAt: initialDefinitionUpdatedAt(definitionSource, now),
     status: 'learning', box: 1, dueAt: now, addedAt: now, lapses: 0,
   };
 }
@@ -29,6 +37,8 @@ export function knownWordEntry(
 ): VocabWord {
   return {
     word, definition, definitionSource,
+    manuallyEdited: false,
+    definitionUpdatedAt: initialDefinitionUpdatedAt(definitionSource, now),
     status: 'mastered', box: 3, dueAt: now, addedAt: now, lapses: 0,
   };
 }

@@ -14,7 +14,7 @@ function seed(...words: VocabWord[]) {
 }
 
 it('flips the card and "Got it" advances the session', async () => {
-  seed(newWordEntry('AGARIC', 'a gilled mushroom', 'api', Date.now() - 1000));
+  seed(newWordEntry('AGARIC', 'a gilled mushroom', 'free-dictionary', Date.now() - 1000));
   render(<App />);
   expect(screen.getByRole('heading', { name: 'AGARIC' })).toBeInTheDocument();
   expect(screen.queryByText(/gilled mushroom/)).not.toBeInTheDocument();
@@ -27,7 +27,7 @@ it('flips the card and "Got it" advances the session', async () => {
 });
 
 it('"Missed" sends the word back to box 1 and counts a lapse', async () => {
-  seed({ ...newWordEntry('NUANCE', 'subtle difference', 'api', Date.now() - 1000), box: 2 });
+  seed({ ...newWordEntry('NUANCE', 'subtle difference', 'free-dictionary', Date.now() - 1000), box: 2 });
   render(<App />);
   await userEvent.click(screen.getByRole('button', { name: /missed/i }));
   const stored = JSON.parse(localStorage.getItem(DB_KEY)!);
@@ -37,8 +37,8 @@ it('"Missed" sends the word back to box 1 and counts a lapse', async () => {
 it('"Skip" defers a card behind the other due words without touching its schedule', async () => {
   const now = Date.now() - 1000;
   seed(
-    { ...newWordEntry('AGARIC', 'a gilled mushroom', 'api', now), box: 2 },
-    { ...newWordEntry('NUANCE', 'a subtle difference', 'api', now), box: 1 },
+    { ...newWordEntry('AGARIC', 'a gilled mushroom', 'free-dictionary', now), box: 2 },
+    { ...newWordEntry('NUANCE', 'a subtle difference', 'free-dictionary', now), box: 1 },
   );
   render(<App />);
   // box desc, so AGARIC (box 2) sorts before NUANCE (box 1)
@@ -52,8 +52,8 @@ it('"Skip" defers a card behind the other due words without touching its schedul
 it('"Skip" resets the card to its front, unflipped', async () => {
   const now = Date.now() - 1000;
   seed(
-    { ...newWordEntry('AGARIC', 'a gilled mushroom', 'api', now), box: 2 },
-    { ...newWordEntry('NUANCE', 'a subtle difference', 'api', now), box: 1 },
+    { ...newWordEntry('AGARIC', 'a gilled mushroom', 'free-dictionary', now), box: 2 },
+    { ...newWordEntry('NUANCE', 'a subtle difference', 'free-dictionary', now), box: 1 },
   );
   render(<App />);
   await userEvent.click(screen.getByRole('heading', { name: 'AGARIC' })); // flip
@@ -63,13 +63,13 @@ it('"Skip" resets the card to its front, unflipped', async () => {
 });
 
 it('disables "Skip" when there is nothing else due to skip to', async () => {
-  seed(newWordEntry('AGARIC', 'a gilled mushroom', 'api', Date.now() - 1000));
+  seed(newWordEntry('AGARIC', 'a gilled mushroom', 'free-dictionary', Date.now() - 1000));
   render(<App />);
   expect(screen.getByRole('button', { name: /skip/i })).toBeDisabled();
 });
 
 it('editing a definition from the card back marks it manual', async () => {
-  seed(newWordEntry('AGARIC', 'a gilled mushroom', 'api', Date.now() - 1000));
+  seed(newWordEntry('AGARIC', 'a gilled mushroom', 'free-dictionary', Date.now() - 1000));
   render(<App />);
   await userEvent.click(screen.getByRole('heading', { name: 'AGARIC' }));
   await userEvent.click(screen.getByRole('button', { name: /edit definition/i }));
@@ -80,12 +80,12 @@ it('editing a definition from the card back marks it manual', async () => {
   const stored = JSON.parse(localStorage.getItem(DB_KEY)!);
   expect(stored.words.AGARIC).toMatchObject({
     definition: 'a gilled fungus',
-    definitionSource: 'manual',
+    manuallyEdited: true,
   });
 });
 
 it('renders a multi-sense definition as separate paragraphs', async () => {
-  seed(newWordEntry('AGARIC', '(noun) A fungus.\n\n(verb) To forage for fungus.', 'api', Date.now() - 1000));
+  seed(newWordEntry('AGARIC', '(noun) A fungus.\n\n(verb) To forage for fungus.', 'free-dictionary', Date.now() - 1000));
   render(<App />);
   await userEvent.click(screen.getByRole('heading', { name: 'AGARIC' }));
   const definition = screen.getByText(/A fungus\./);

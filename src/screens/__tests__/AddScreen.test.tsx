@@ -15,13 +15,13 @@ vi.mock('../../lib/ocr', () => ({
 
 vi.mock('../../lib/dictionary', () => ({
   fetchDefinitions: vi.fn(async (words: string[]) =>
-    words.map((word) => ({ word, definition: `def of ${word}`, source: 'api' as const }))),
+    words.map((word) => ({ word, definition: `def of ${word}`, source: 'free-dictionary' as const }))),
 }));
 
 function seedTiaraMastered() {
   localStorage.setItem(DB_KEY, JSON.stringify({
     schemaVersion: SCHEMA_VERSION,
-    words: { TIARA: knownWordEntry('TIARA', 'a crown', 'api', 1) },
+    words: { TIARA: knownWordEntry('TIARA', 'a crown', 'free-dictionary', 1) },
   }));
 }
 
@@ -155,7 +155,7 @@ it('shows which specific words failed definition lookup', async () => {
     words.map((word) => (
       word === 'AGARIC'
         ? { word, definition: 'No definition found — tap to edit.', source: 'none' as const }
-        : { word, definition: `def of ${word}`, source: 'api' as const }
+        : { word, definition: `def of ${word}`, source: 'free-dictionary' as const }
     )));
   seedTiaraMastered();
   await uploadShot();

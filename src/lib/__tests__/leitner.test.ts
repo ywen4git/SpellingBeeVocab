@@ -3,13 +3,14 @@ import {
   BOX_INTERVAL_DAYS, dueWords, gradeGotIt, gradeMissed, knownWordEntry,
   newWordEntry, nextDayBoundary, nextDueAt, resetToLearning, unmaster,
 } from '../leitner';
+import { SCHEMA_VERSION } from '../types';
 import type { VocabDb, VocabWord } from '../types';
 
 const at = (y: number, mo: number, d: number, h: number, mi = 0) =>
   new Date(y, mo - 1, d, h, mi).getTime();
 
 function db(...words: VocabWord[]): VocabDb {
-  return { schemaVersion: 1, words: Object.fromEntries(words.map((w) => [w.word, w])) };
+  return { schemaVersion: SCHEMA_VERSION, words: Object.fromEntries(words.map((w) => [w.word, w])) };
 }
 
 describe('nextDayBoundary (4 AM local study-day boundary)', () => {
@@ -29,13 +30,13 @@ describe('nextDayBoundary (4 AM local study-day boundary)', () => {
 
 describe('grading', () => {
   const now = at(2026, 7, 12, 12);
-  const w = newWordEntry('AGARIC', 'a mushroom', 'api', now);
+  const w = newWordEntry('AGARIC', 'a mushroom', 'free-dictionary', now);
 
   it('new words start learning, box 1, due immediately', () => {
     expect(w).toMatchObject({ status: 'learning', box: 1, dueAt: now, lapses: 0 });
   });
   it('known words import as mastered', () => {
-    expect(knownWordEntry('TIARA', 'a crown', 'api', now)).toMatchObject({
+    expect(knownWordEntry('TIARA', 'a crown', 'free-dictionary', now)).toMatchObject({
       status: 'mastered', box: 3, addedAt: now,
     });
   });
@@ -58,12 +59,31 @@ describe('grading', () => {
     expect(g.dueAt).toBe(nextDayBoundary(now, 1));
   });
   it('resetToLearning: learning box 1, due now', () => {
-    const m = knownWordEntry('TIARA', 'a crown', 'api', now - 999);
+    const m = knownWordEntry('TIARA', 'a crown', 'free-dictionary', now - 999);
     expect(resetToLearning(m, now)).toMatchObject({ status: 'learning', box: 1, dueAt: now });
   });
   it('unmaster: learning box 3, due now', () => {
-    const m = knownWordEntry('TIARA', 'a crown', 'api', now - 999);
+    const m = knownWordEntry('TIARA', 'a crown', 'free-dictionary', now - 999);
     expect(unmaster(m, now)).toMatchObject({ status: 'learning', box: 3, dueAt: now });
+  });
+});
+
+describe('entry provenance defaults', () => {
+  const now = at(2026, 7, 12, 12);
+
+  it('a word with real fetched content is not manually edited and has an update timestamp', () => {
+    const w = newWordEntry('AGARIC', 'a mushroom', 'free-dictionary', now);
+    expect(w).toMatchObject({ manuallyEdited: false, definitionUpdatedAt: now });
+  });
+  it('a word whose fetch found nothing has no update timestamp', () => {
+    const w = newWordEntry('XYZZY', 'No definition found — tap to edit.', 'none', now);
+    expect(w.definitionUpdatedAt).toBeNull();
+  });
+  it('knownWordEntry follows the same rule', () => {
+    const found = knownWordEntry('TIARA', 'a crown', 'merriam-webster', now);
+    const missing = knownWordEntry('TIARA', 'No definition found — tap to edit.', 'none', now);
+    expect(found.definitionUpdatedAt).toBe(now);
+    expect(missing.definitionUpdatedAt).toBeNull();
   });
 });
 

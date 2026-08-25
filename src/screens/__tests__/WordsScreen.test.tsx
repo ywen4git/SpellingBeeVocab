@@ -23,8 +23,8 @@ async function openWords() {
 
 it('searches the word list', async () => {
   seed(
-    newWordEntry('AGARIC', 'a mushroom', 'api', 1),
-    knownWordEntry('TIARA', 'a crown', 'api', 2),
+    newWordEntry('AGARIC', 'a mushroom', 'free-dictionary', 1),
+    knownWordEntry('TIARA', 'a crown', 'free-dictionary', 2),
   );
   await openWords();
   expect(screen.getByText('AGARIC')).toBeInTheDocument();
@@ -35,8 +35,8 @@ it('searches the word list', async () => {
 
 it('filters by status', async () => {
   seed(
-    newWordEntry('AGARIC', 'a mushroom', 'api', 1),
-    knownWordEntry('TIARA', 'a crown', 'api', 2),
+    newWordEntry('AGARIC', 'a mushroom', 'free-dictionary', 1),
+    knownWordEntry('TIARA', 'a crown', 'free-dictionary', 2),
   );
   await openWords();
   await userEvent.click(screen.getByRole('button', { name: /^mastered$/i }));
@@ -45,7 +45,7 @@ it('filters by status', async () => {
 });
 
 it('edits a definition from the list', async () => {
-  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  seed(newWordEntry('AGARIC', 'a mushroom', 'free-dictionary', 1));
   await openWords();
   await userEvent.click(screen.getByRole('button', { name: /AGARIC/ }));
   await userEvent.click(screen.getByRole('button', { name: /edit definition/i }));
@@ -55,7 +55,7 @@ it('edits a definition from the list', async () => {
   await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
   expect(JSON.parse(localStorage.getItem(DB_KEY)!).words.AGARIC).toMatchObject({
     definition: 'a gilled fungus',
-    definitionSource: 'manual',
+    manuallyEdited: true,
   });
 });
 
@@ -68,7 +68,7 @@ it('starts the editor empty when the definition is the "not found" placeholder',
 });
 
 it('saving an empty definition reverts to the "not found" placeholder', async () => {
-  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  seed(newWordEntry('AGARIC', 'a mushroom', 'free-dictionary', 1));
   await openWords();
   await userEvent.click(screen.getByRole('button', { name: /AGARIC/ }));
   await userEvent.click(screen.getByRole('button', { name: /edit definition/i }));
@@ -77,11 +77,12 @@ it('saving an empty definition reverts to the "not found" placeholder', async ()
   expect(JSON.parse(localStorage.getItem(DB_KEY)!).words.AGARIC).toMatchObject({
     definition: PLACEHOLDER_DEFINITION,
     definitionSource: 'none',
+    manuallyEdited: false,
   });
 });
 
 it('links out to Google to look up the word being edited', async () => {
-  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  seed(newWordEntry('AGARIC', 'a mushroom', 'free-dictionary', 1));
   await openWords();
   await userEvent.click(screen.getByRole('button', { name: /AGARIC/ }));
   await userEvent.click(screen.getByRole('button', { name: /edit definition/i }));
@@ -91,7 +92,7 @@ it('links out to Google to look up the word being edited', async () => {
 });
 
 it('lets the user preview and swap in an alternate dictionary definition', async () => {
-  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  seed(newWordEntry('AGARIC', 'a mushroom', 'free-dictionary', 1));
   vi.stubGlobal('fetch', vi.fn(async () => ({
     ok: true,
     status: 200,
@@ -111,12 +112,12 @@ it('lets the user preview and swap in an alternate dictionary definition', async
   await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
   expect(JSON.parse(localStorage.getItem(DB_KEY)!).words.AGARIC).toMatchObject({
     definition: '(noun) A gilled fungus, often edible.',
-    definitionSource: 'manual',
+    manuallyEdited: true,
   });
 });
 
 it('filters an already-shown sense out of a multi-sense definition, keeping the rest', async () => {
-  seed(newWordEntry('AGARIC', '(noun) A fungus.\n\n(verb) To forage.', 'api', 1));
+  seed(newWordEntry('AGARIC', '(noun) A fungus.\n\n(verb) To forage.', 'free-dictionary', 1));
   vi.stubGlobal('fetch', vi.fn(async () => ({
     ok: true,
     status: 200,
@@ -136,7 +137,7 @@ it('filters an already-shown sense out of a multi-sense definition, keeping the 
 });
 
 it('shows a message when no other definitions are found', async () => {
-  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  seed(newWordEntry('AGARIC', 'a mushroom', 'free-dictionary', 1));
   vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, json: async () => ({}) })));
   await openWords();
   await userEvent.click(screen.getByRole('button', { name: /AGARIC/ }));
@@ -146,7 +147,7 @@ it('shows a message when no other definitions are found', async () => {
 });
 
 it('deletes only after inline confirm', async () => {
-  seed(newWordEntry('AGARIC', 'a mushroom', 'api', 1));
+  seed(newWordEntry('AGARIC', 'a mushroom', 'free-dictionary', 1));
   await openWords();
   await userEvent.click(screen.getByRole('button', { name: /AGARIC/ }));
   await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
@@ -156,7 +157,7 @@ it('deletes only after inline confirm', async () => {
 });
 
 it('unmaster returns a word to learning box 3', async () => {
-  seed(knownWordEntry('TIARA', 'a crown', 'api', 1));
+  seed(knownWordEntry('TIARA', 'a crown', 'free-dictionary', 1));
   await openWords();
   await userEvent.click(screen.getByRole('button', { name: /TIARA/ }));
   await userEvent.click(screen.getByRole('button', { name: /unmaster/i }));
@@ -167,7 +168,7 @@ it('unmaster returns a word to learning box 3', async () => {
 });
 
 it('renders a multi-sense definition as separate paragraphs', async () => {
-  seed(newWordEntry('AGARIC', '(noun) A fungus.\n\n(verb) To forage for fungus.', 'api', 1));
+  seed(newWordEntry('AGARIC', '(noun) A fungus.\n\n(verb) To forage for fungus.', 'free-dictionary', 1));
   await openWords();
   await userEvent.click(screen.getByRole('button', { name: /AGARIC/ }));
   const definition = screen.getByText(/A fungus\./);
