@@ -250,3 +250,59 @@ it('does not show the bulk-fix button when nothing is missing', async () => {
   await openWords();
   expect(screen.queryByRole('button', { name: /fix.*missing definition/i })).not.toBeInTheDocument();
 });
+
+it('reports up to date when a re-fetch matches the current definition', async () => {
+  seed(newWordEntry('AGARIC', '(noun) A fungus.', 'free-dictionary', 1));
+  vi.stubGlobal('fetch', vi.fn(async () => ({
+    ok: true, status: 200,
+    json: async () => [{ meanings: [{ partOfSpeech: 'noun', definitions: [{ definition: 'A fungus.' }] }] }],
+  })));
+  await openWords();
+  await userEvent.click(screen.getByRole('button', { name: /AGARIC/ }));
+  await userEvent.click(screen.getByRole('button', { name: /check for updated definition/i }));
+  expect(await screen.findByText(/already up to date/i)).toBeInTheDocument();
+});
+
+it('reports nothing found when a re-fetch comes back empty', async () => {
+  seed(newWordEntry('AGARIC', '(noun) A fungus.', 'free-dictionary', 1));
+  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, json: async () => ({}) })));
+  await openWords();
+  await userEvent.click(screen.getByRole('button', { name: /AGARIC/ }));
+  await userEvent.click(screen.getByRole('button', { name: /check for updated definition/i }));
+  expect(await screen.findByText(/no definition found — nothing changed/i)).toBeInTheDocument();
+});
+
+it('shows a diff and lets the user adopt the fetched definition', async () => {
+  seed(newWordEntry('AGARIC', '(noun) A fungus.', 'free-dictionary', 1));
+  vi.stubGlobal('fetch', vi.fn(async () => ({
+    ok: true, status: 200,
+    json: async () => [{
+      meanings: [{ partOfSpeech: 'noun', definitions: [{ definition: 'A gilled fungus, often edible.' }] }],
+    }],
+  })));
+  await openWords();
+  await userEvent.click(screen.getByRole('button', { name: /AGARIC/ }));
+  await userEvent.click(screen.getByRole('button', { name: /check for updated definition/i }));
+  await screen.findByText('(noun) A gilled fungus, often edible.');
+  await userEvent.click(screen.getByRole('button', { name: /^adopt new$/i }));
+  expect(JSON.parse(localStorage.getItem(DB_KEY)!).words.AGARIC).toMatchObject({
+    definition: '(noun) A gilled fungus, often edible.',
+    definitionSource: 'free-dictionary',
+    manuallyEdited: false,
+  });
+});
+
+it('discards the fetched definition when the user keeps the current one', async () => {
+  seed(newWordEntry('AGARIC', '(noun) A fungus.', 'free-dictionary', 1));
+  vi.stubGlobal('fetch', vi.fn(async () => ({
+    ok: true, status: 200,
+    json: async () => [{ meanings: [{ partOfSpeech: 'noun', definitions: [{ definition: 'A different meaning.' }] }] }],
+  })));
+  await openWords();
+  await userEvent.click(screen.getByRole('button', { name: /AGARIC/ }));
+  await userEvent.click(screen.getByRole('button', { name: /check for updated definition/i }));
+  await screen.findByText('(noun) A different meaning.');
+  await userEvent.click(screen.getByRole('button', { name: /keep current/i }));
+  expect(JSON.parse(localStorage.getItem(DB_KEY)!).words.AGARIC).toMatchObject({ definition: '(noun) A fungus.' });
+  expect(screen.getByRole('button', { name: /check for updated definition/i })).toBeInTheDocument();
+});

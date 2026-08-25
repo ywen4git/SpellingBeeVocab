@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useVocab } from '../context/VocabProvider';
 import { DefinitionEditor } from '../components/DefinitionEditor';
+import { DefinitionRefetch } from '../components/DefinitionRefetch';
 import { formatDate } from '../lib/format';
 import type { VocabWord } from '../lib/types';
 import { useToast } from '../components/Toast';
@@ -196,7 +197,9 @@ export default function WordsScreen() {
                 )}
                 <p className="text-xs text-slate-400">{w.lapses} lapses</p>
                 {!editing && (
-                  <div className="flex flex-wrap gap-2">
+                  <>
+                    <DefinitionRefetch word={w.word} current={w.definition} />
+                    <div className="flex flex-wrap gap-2">
                     <button
                       onClick={() => setEditing(true)}
                       className="min-h-[44px] rounded-xl bg-slate-200 px-3 py-2 text-xs font-semibold"
@@ -227,6 +230,7 @@ export default function WordsScreen() {
                       </button>
                     )}
                   </div>
+                  </>
                 )}
               </div>
             )}
