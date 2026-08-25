@@ -60,3 +60,29 @@ it('a plain toast still auto-dismisses after 4s', async () => {
   expect(screen.queryByRole('status')).not.toBeInTheDocument();
   vi.useRealTimers();
 });
+
+it('keeps the context value referentially stable so a consumer effect keyed on it never re-fires', () => {
+  // Regression test: a consumer that calls toast.show() from a useEffect keyed on the toast
+  // context value (as VocabProvider does for its corrupt-storage/legacy-migration toasts) used to
+  // infinite-loop — each show() re-rendered ToastProvider, which handed consumers a brand-new
+  // `{ show }` object, which re-triggered the effect, forever. This asserts the value's identity
+  // is stable across re-renders instead of re-running that unbounded loop.
+  const seenValues: unknown[] = [];
+  function Trigger() {
+    const toast = useToast();
+    useEffect(() => { seenValues.push(toast); }, [toast]);
+    return null;
+  }
+  function Wrapper({ n }: { n: number }) {
+    return (
+      <ToastProvider>
+        <Trigger />
+        <span>{n}</span>
+      </ToastProvider>
+    );
+  }
+  const { rerender } = render(<Wrapper n={0} />);
+  rerender(<Wrapper n={1} />);
+  rerender(<Wrapper n={2} />);
+  expect(seenValues).toHaveLength(1);
+});

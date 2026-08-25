@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
 
 interface ToastOptions {
   detail?: string[];
@@ -31,9 +31,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const hasDetail = (toast?.detail?.length ?? 0) > 0;
+  // Memoized so consumers that key an effect on the context value (e.g. VocabProvider's
+  // corrupt-storage/legacy-migration toast) don't see a new object identity on every render —
+  // without this, calling show() from such an effect re-renders the provider, which reruns the
+  // effect, which calls show() again, forever.
+  const value = useMemo(() => ({ show }), [show]);
 
   return (
-    <ToastContext.Provider value={{ show }}>
+    <ToastContext.Provider value={value}>
       {children}
       {toast && (
         <div
