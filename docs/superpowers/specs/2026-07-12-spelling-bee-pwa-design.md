@@ -1,6 +1,6 @@
 # Bee Vocab Builder — Full Design Spec
 
-**Date:** 2026-07-12 (originally); kept in sync with the shipped app — last reviewed 2026-08-08
+**Date:** 2026-07-12 (originally); kept in sync with the shipped app — last reviewed 2026-08-24
 **Status:** Implemented (v1) and actively extended; this document tracks current behavior, not just the original v1 plan
 **Supersedes:** `spelling-bee-pwa-plan.md` (original draft; kept for reference)
 
@@ -69,6 +69,7 @@ src/
     leitner.ts      # pure scheduling: promote, demote, dueWords, session order
     parser.ts       # OCR text -> hive letters + classified words (§7.2)
     dictionary.ts   # sequential definition fetching w/ backoff + alternates (§8)
+    definitionDiff.ts # sense-level diff between an old and a re-fetched definition (§8.4)
     storage.ts      # load/save/migrate localStorage envelope, export/import merge
     ocr.ts          # tesseract worker wrapper (image -> 3 OCR passes + progress, §7.1)
   components/       # shared UI: Card, TabBar, Toast, ProgressBar, ...
@@ -96,12 +97,18 @@ Rules:
 
 ```ts
 type WordStatus = 'learning' | 'mastered';
-type DefinitionSource = 'api' | 'manual' | 'none';
+// The provider that last successfully answered a fetch for this word — 'none' if
+// the last attempt (or the only attempt ever made) found nothing. Independent of
+// whether a human has since hand-edited the text (see manuallyEdited below).
+type DefinitionSource = 'merriam-webster' | 'free-dictionary' | 'none';
 
 interface VocabWord {
   word: string;                 // UPPERCASE, unique key
-  definition: string;           // placeholder text when source === 'none'
+  definition: string;           // placeholder text when definition is empty
   definitionSource: DefinitionSource;
+  manuallyEdited: boolean;      // true once a human has typed and saved definition text
+  definitionUpdatedAt: number | null; // epoch ms of the last fetch or manual save; null
+                                // if the word has never had real definition text
   status: WordStatus;
   box: 1 | 2 | 3;               // meaningful while status === 'learning';
                                 // stays at 3 after mastery (harmless, kept for stats)
@@ -111,17 +118,32 @@ interface VocabWord {
 }
 
 interface VocabDb {
-  schemaVersion: 1;
+  schemaVersion: 2;
   words: Record<string, VocabWord>;   // keyed by word
 }
 ```
 
 Persistence: `localStorage['beevocab.db.v1']` holds `JSON.stringify(VocabDb)`.
 `storage.load()` returns an empty db if the key is missing, and runs migrations if
-`schemaVersion` is older than current (v1 has none; the hook exists so v2 is a
-pure function `migrate(v1Db): v2Db`). A corrupt/unparseable value is not silently
+`schemaVersion` is older than current. A corrupt/unparseable value is not silently
 discarded: it is copied to `beevocab.db.corrupt` before starting fresh, and a toast
 tells the user.
+
+**v1 → v2 migration** *(added 2026-08-24, see §8.4)*: introduced by
+`manuallyEdited`/`definitionUpdatedAt` and the narrower `DefinitionSource`. Applies
+transparently wherever a v1 payload can enter the app — normal page load
+(`loadDb`) and importing an old backup file (`parseBackup` → `mergeDb`) — so
+neither path rejects a real user's pre-upgrade data as corrupt:
+
+| v1 `definitionSource` | v2 `definitionSource` | v2 `manuallyEdited` |
+|---|---|---|
+| `'api'` | `'free-dictionary'` (MW support postdates every pre-migration word, so this is accurate, not a guess, for real installs) | `false` |
+| `'manual'` | `'none'` (the pre-edit source, if any, isn't recoverable) | `true` |
+| `'none'` | `'none'` | `false` |
+
+`definitionUpdatedAt` is backfilled to each word's existing `addedAt` in every
+case (best available approximation — the true last-update time isn't recoverable
+either). `schemaVersion` is rewritten to `2`; every subsequent save writes v2.
 
 There is one legacy migration: if the original draft app's key
 `spelling_bee_vocab` exists (`{new: [], mastered: []}` shape), import it on first
@@ -239,13 +261,26 @@ confirm pattern for destructive actions.
 ### 6.3 Words
 
 - Search box (substring match on word), filter chips: All / Learning / Mastered.
-- Each row: word, box/mastered badge, first line of definition, lapses count.
-- Tapping a row expands it: full definition, **Edit definition** (textarea →
-  save sets `definitionSource: 'manual'`, or reverts to the placeholder if left
-  empty — see §8.2; see §8.1 for the alternate-definition picker and Google
-  lookup link available inside that editor), **Delete** (inline confirm), and
-  for mastered words an **Unmaster** action (back to learning, box 3, due now)
-  in case something was graduated prematurely.
+- Each row: word, box/mastered badge, a small colored **provenance dot**
+  (§8.4 — amber for Merriam-Webster, slate for the free dictionary, none for a
+  manually-edited or still-empty definition), first line of definition, lapses
+  count.
+- Tapping a row expands it: a provenance label + "Added {date}" / "Updated
+  {date}" line (§8.4), full definition, **Edit definition** (textarea → save
+  sets `manuallyEdited: true`, `definitionUpdatedAt: now`, and leaves
+  `definitionSource` as whichever provider it last came from — or reverts
+  fully to the empty/placeholder state if left empty, resetting
+  `definitionSource: 'none'` and `manuallyEdited: false` too — see §8.2; see
+  §8.1 for the alternate-definition picker and Google lookup link available
+  inside that editor), **Check for updated definition** (§8.4 — single-word
+  re-fetch with a diff-and-adopt flow), **Delete** (inline confirm), and for
+  mastered words an **Unmaster** action (back to learning, box 3, due now) in
+  case something was graduated prematurely.
+- **Bulk "fix missing definitions" mode** *(added 2026-08-24, see §8.4)*: when
+  any word has `definitionSource === 'none'` and empty (placeholder) text, a
+  "Fix N missing definitions" button appears above the list. Tapping it
+  switches the list into a select-mode scoped to just those words (checkboxes,
+  pre-checked) with a "Fetch selected" action.
 
 ### 6.4 Data
 
@@ -485,8 +520,12 @@ possible.
   `definition: 'No definition found — tap to edit.'`, `definitionSource: 'none'`.
   Never blocks committing the word.
 - `signal` (AbortSignal) supports the wizard's Cancel.
-- Each result: `definitionSource: 'api'` on success. Manual edits anywhere set
-  `'manual'` and are never overwritten by re-fetches.
+- Each result carries which specific provider answered —
+  `definitionSource: 'merriam-webster' | 'free-dictionary'` on success,
+  `'none'` on a miss (§8.4). A fetch never runs against a word that already
+  has a real, human-entered definition unless the user explicitly triggers it
+  (single re-fetch, §8.4) — the bulk import/bulk-missing-definitions paths
+  only ever target words that are still empty.
 - **Abort detection gotcha** *(fixed 2026-07-27)*: a real `fetch()` abort
   throws a `DOMException` named `"AbortError"`. Checking `err instanceof
   Error` to detect it works in real browsers (`DOMException` extends `Error`
@@ -517,7 +556,9 @@ Words (§6.3):
   risky. This is a manual fallback alongside the API-backed alternatives
   above, not a replacement for them.
 - Using either path still goes through the normal Save button, which sets
-  `definitionSource: 'manual'` — same as any other hand-edit.
+  `manuallyEdited: true` and `definitionUpdatedAt: now` — same as any other
+  hand-edit (§8.4); `definitionSource` is left as whichever provider the text
+  last actually came from.
 
 ### 8.2 Placeholder-aware editing *(added 2026-08-04)*
 
@@ -527,8 +568,10 @@ starts the textarea empty instead of pre-filled with the placeholder text —
 so the common case (pasting a definition in after OCR/API lookup came up
 empty) doesn't require manually selecting and deleting the placeholder first.
 Saving is symmetric: if the textarea is empty (or whitespace-only) on Save,
-`editDefinition` writes the placeholder back with `definitionSource: 'none'`
-rather than persisting an empty string as a "manual" definition.
+`editDefinition` writes the placeholder back and resets to the full blank
+state — `definitionSource: 'none'`, `manuallyEdited: false`,
+`definitionUpdatedAt: null` — rather than persisting an empty string as a
+manually-edited definition.
 
 ### 8.3 Optional Merriam-Webster source *(added 2026-08-08)*
 
@@ -544,6 +587,11 @@ fix for "definitions are often the uncommon meaning."
   showing which source is currently active. Save performs one lightweight
   lookup (e.g. the word "test") before accepting the key, so a typo surfaces
   immediately rather than silently degrading every future import.
+  **Test key** *(added 2026-08-24)*: once a key is saved, a "Test key" button
+  re-runs that same lookup+parse check on demand (key rotation, MW-side
+  outages, or a key that's since been revoked can all make a previously-valid
+  key stop working silently) — reuses `validateMwApiKey` and shows the same
+  valid/invalid/network-error outcomes inline as the original save-time check.
 - **Key storage:** its own `localStorage` entry (`beevocab.mwApiKey`),
   separate from the `VocabDb` envelope (§4) — deliberately **excluded** from
   `exportDb`/`importBackup` (§6.4). Backups are meant to move between devices
@@ -563,9 +611,8 @@ fix for "definitions are often the uncommon meaning."
   behavior applied there too — before giving up. Maximizes success rate at
   the cost of up to one extra request on MW misses. No key configured →
   behavior is unchanged (dictionaryapi.dev only).
-- **`definitionSource`** stays `'api' | 'manual' | 'none'` — no new value to
-  distinguish which provider actually answered, since nothing in the UI
-  differentiates them today (YAGNI; add one later if that changes).
+- **`definitionSource`** distinguishes which provider actually answered
+  (`'merriam-webster' | 'free-dictionary'`) — see §8.4 for how that's surfaced.
 - **File layout:** `dictionary.ts` grows a provider seam —
   `lib/dictionaryProviders/freeDictionary.ts` (existing dictionaryapi.dev
   logic, moved as-is) and `lib/dictionaryProviders/merriamWebster.ts` (new),
@@ -578,6 +625,59 @@ fix for "definitions are often the uncommon meaning."
   pronunciation references — not wired up now (§12 backlog item 1 still
   covers audio, and can reuse this as its source instead of/alongside
   `speechSynthesis` when it's picked up).
+
+### 8.4 Definition provenance, dates, and re-fetching *(added 2026-08-24)*
+
+Resolves the "bulk re-fetch of definitions for existing words" backlog item
+that previously sat in §12 (added there 2026-08-08, removed now that it's
+designed here). Builds on §4's `definitionSource` / `manuallyEdited` /
+`definitionUpdatedAt` fields.
+
+- **Provenance badges (Words screen, §6.3):** display precedence is
+  `manuallyEdited` first — a hand-edited word always shows "Manual" (list-row:
+  no dot; detail: "Manual" label) regardless of what `definitionSource` says,
+  since that field only tracks the *last fetch*, not the current text.
+  Otherwise the badge reflects `definitionSource`: amber dot / "Merriam-
+  Webster" for `'merriam-webster'`, slate dot / "Free dictionary" for
+  `'free-dictionary'`, no dot / no label for `'none'` (nothing fetched, still
+  the placeholder). The detail view also shows "Added {date}" (`addedAt`,
+  always present) and "Updated {date}" (`definitionUpdatedAt`, omitted when
+  `null`).
+- **"Missing definition"** means `definition === PLACEHOLDER_DEFINITION` —
+  **not** `definitionSource === 'none'` alone. A word can have
+  `definitionSource: 'none'` (nothing was ever successfully fetched for it)
+  while still holding real, manually-typed content (`manuallyEdited: true`,
+  text no longer the placeholder) — that word has real content and must not
+  be treated as missing. Every "missing" check in this section (the bulk mode
+  below, and its badge/dot) uses the placeholder-text comparison.
+- **Bulk re-fetch of missing definitions (§6.3):** entering select-mode shows
+  every word with a missing definition, all pre-checked; "Fetch selected"
+  runs the existing `fetchDefinitions` (same gap/retry/backoff/progress as the
+  Add wizard, §8) against just that list. On completion, each successfully
+  fetched word gets `definitionSource` set to whichever provider answered,
+  `definitionUpdatedAt: now`, `manuallyEdited: false`; words still not found
+  are left as `'none'`/placeholder. A toast reports "{X} updated, {Y} failed"
+  (failed = still missing afterward), mirroring the Add wizard's existing
+  summary-toast pattern (§6.2 step 3).
+- **Single-word re-fetch with diff (§6.3):** "Check for updated definition"
+  calls a newly-exported single-word fetch (`fetchOne`'s existing MW→fallback
+  logic, made public instead of module-private) regardless of whether the
+  word currently has content — this is the one path allowed to re-fetch over
+  an existing manually-edited definition, since it's an explicit, one-word,
+  user-initiated action with a preview/confirm step, not a background bulk
+  operation.
+  - If the fetched text exactly matches the current definition: "Already up
+    to date," no further UI.
+  - If it differs: `definitionDiff.ts` splits both the current and fetched
+    text on `"\n\n"` into their sense-paragraphs (§8's grouping already
+    produces this shape) and diffs the two arrays with an LCS-based algorithm
+    — senses only in the current version render struck-through on a red
+    background, senses only in the fetched version render on a green
+    background, unchanged senses render plain. Two actions: **Adopt new**
+    (commits the fetched text, `definitionSource` set to whichever provider
+    answered, `definitionUpdatedAt: now`, `manuallyEdited: false`) or **Keep
+    current** (discards the fetched result; nothing changes, including
+    `definitionUpdatedAt`).
 
 ## 9. PWA
 
@@ -625,17 +725,28 @@ up a deploy.
     `l`→`I`, digit→letter, corrections left unattempted without a confirmed
     hive, already-valid words never flagged).
   - `storage.ts`: empty load, round-trip, corrupt-value quarantine, legacy-key
-    migration, import merge rules (newer wins, mastered wins).
+    migration, import merge rules (newer wins, mastered wins), **v1→v2
+    migration** (§4/§8.4: each `definitionSource` mapping, `manuallyEdited`
+    derivation, `definitionUpdatedAt` backfill, on both load and import).
   - `dictionary.ts`: mocked fetch — success shape, 404, 429-retry, abort;
     `fetchAlternateDefinitions` flattening/deduping across entries, 404/network
-    error/abort handling.
+    error/abort handling; **provider-specific `definitionSource`** in
+    `fetchOne`/`fetchDefinitions` results (`'merriam-webster'` vs
+    `'free-dictionary'` vs `'none'`, §8.4).
+  - `definitionDiff.ts` *(new, §8.4)*: identical text → no diff entries;
+    sense added/removed/reordered/unchanged, empty-to-populated and
+    populated-to-empty edge cases.
 - **Component (RTL):** Add-wizard review flow (uncheck → commit count,
   "Already know" → mastered, reset-to-learning checkbox, multi-file upload
   combining into one parse, pangram grouping/divider, uncertain-corrections
   section and its own commit path), Study (grade-advances-card, Skip
   defers-without-scheduling and resets card to front, Skip disabled with only
   one word due), Words (edit/delete, alternate-definition preview/swap,
-  Google-lookup link, "no other definitions" state).
+  Google-lookup link, "no other definitions" state, **provenance badge per
+  source/manual/empty state, bulk missing-definitions select-and-fetch with
+  success/fail toast, single-word re-fetch's up-to-date / diff / adopt /
+  reject paths, §8.4**), Data (**MW "Test key" button's
+  valid/invalid/network-error outcomes, §8.3**).
 - **Manual smoke checklist** (in README): install to Android home screen,
   airplane-mode OCR, real screenshot end-to-end, export → reset → import.
 - CI: GitHub Actions runs typecheck + tests on push; deploy job publishes `dist/`
@@ -659,13 +770,6 @@ up a deploy.
 6. The pangram/continuation-page ambiguity noted at the end of §7.2 (an
    unpaired pangram word alone on its own line, on a screenshot with no real
    hive row, can be mistaken for one — known, low-frequency, not fixed).
-7. **Bulk re-fetch of definitions for existing words** *(added 2026-08-08)* —
-   many already-imported words are stuck with the empty placeholder or an
-   incomplete/wrong sense from before §8's grouping existed. Wants: a way to
-   flag words for refetch while going through Study (§6.1), and a separate
-   place (likely Data, §6.4) to trigger the actual refetch for everything
-   flagged. Deliberately not designed as part of this spec update — separate
-   follow-up spec.
 
 ## 13. Milestones (implementation-plan seeds)
 
