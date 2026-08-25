@@ -6,3 +6,10 @@ export function formatUntil(ms: number): string {
   const days = Math.round(hours / 24);
   return days === 1 ? 'tomorrow' : `in ${days} days`;
 }
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+export function formatDate(ms: number): string {
+  const d = new Date(ms);
+  return `${MONTHS[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+}
