@@ -135,15 +135,13 @@ transparently wherever a v1 payload can enter the app — normal page load
 (`loadDb`) and importing an old backup file (`parseBackup` → `mergeDb`) — so
 neither path rejects a real user's pre-upgrade data as corrupt:
 
-| v1 `definitionSource` | v2 `definitionSource` | v2 `manuallyEdited` |
-|---|---|---|
-| `'api'` | `'free-dictionary'` (MW support postdates every pre-migration word, so this is accurate, not a guess, for real installs) | `false` |
-| `'manual'` | `'none'` (the pre-edit source, if any, isn't recoverable) | `true` |
-| `'none'` | `'none'` | `false` |
+| v1 `definitionSource` | v2 `definitionSource` | v2 `manuallyEdited` | v2 `definitionUpdatedAt` |
+|---|---|---|---|
+| `'api'` | `'free-dictionary'` (MW support postdates every pre-migration word, so this is accurate, not a guess, for real installs) | `false` | `addedAt` (best available approximation — the true last-update time isn't recoverable either) |
+| `'manual'` | `'none'` (the pre-edit source, if any, isn't recoverable) | `true` | `addedAt` (same approximation — the word had real, hand-edited text at some point) |
+| `'none'` | `'none'` | `false` | `null` (the word never had real definition text, so `null` is exact here, not an approximation — same contract a freshly-created never-fetched word gets) |
 
-`definitionUpdatedAt` is backfilled to each word's existing `addedAt` in every
-case (best available approximation — the true last-update time isn't recoverable
-either). `schemaVersion` is rewritten to `2`; every subsequent save writes v2.
+`schemaVersion` is rewritten to `2`; every subsequent save writes v2.
 
 There is one legacy migration: if the original draft app's key
 `spelling_bee_vocab` exists (`{new: [], mastered: []}` shape), import it on first

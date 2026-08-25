@@ -138,7 +138,7 @@ describe('parseBackup v1 -> v2 migration', () => {
       schemaVersion: 1, words: { AGARIC: v1Word('none', NOW - 5000) },
     }));
     expect(result?.words.AGARIC).toMatchObject({
-      definitionSource: 'none', manuallyEdited: false, definitionUpdatedAt: NOW - 5000,
+      definitionSource: 'none', manuallyEdited: false, definitionUpdatedAt: null,
     });
   });
 });

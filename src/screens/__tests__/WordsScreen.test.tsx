@@ -191,6 +191,14 @@ it('shows a manual badge even when the last fetch came from a provider', async (
   expect(screen.getByText('Manual')).toBeInTheDocument();
 });
 
+it('shows a manual badge and excludes a never-fetched manually-edited word from the missing-definitions flow', async () => {
+  seed({ ...newWordEntry('AGARIC', 'my own hand-typed definition', 'none', 1), manuallyEdited: true });
+  await openWords();
+  await userEvent.click(screen.getByRole('button', { name: /AGARIC/ }));
+  expect(screen.getByText('Manual')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /fix.*missing definition/i })).not.toBeInTheDocument();
+});
+
 it('shows added and updated dates', async () => {
   const addedAt = new Date(2026, 0, 5).getTime();
   const updatedAt = new Date(2026, 0, 10).getTime();
@@ -290,6 +298,26 @@ it('shows a diff and lets the user adopt the fetched definition', async () => {
     definitionSource: 'free-dictionary',
     manuallyEdited: false,
   });
+});
+
+it('adopting a fetched definition clears manuallyEdited even for a never-fetched hand-typed word', async () => {
+  seed({ ...newWordEntry('AGARIC', 'my own hand-typed definition', 'none', 1), manuallyEdited: true });
+  vi.stubGlobal('fetch', vi.fn(async () => ({
+    ok: true, status: 200,
+    json: async () => [{ meanings: [{ partOfSpeech: 'noun', definitions: [{ definition: 'A gilled fungus.' }] }] }],
+  })));
+  await openWords();
+  await userEvent.click(screen.getByRole('button', { name: /AGARIC/ }));
+  await userEvent.click(screen.getByRole('button', { name: /check for updated definition/i }));
+  await screen.findByText('(noun) A gilled fungus.');
+  await userEvent.click(screen.getByRole('button', { name: /^adopt new$/i }));
+  const stored = JSON.parse(localStorage.getItem(DB_KEY)!).words.AGARIC;
+  expect(stored).toMatchObject({
+    definition: '(noun) A gilled fungus.',
+    definitionSource: 'free-dictionary',
+    manuallyEdited: false,
+  });
+  expect(typeof stored.definitionUpdatedAt).toBe('number');
 });
 
 it('discards the fetched definition when the user keeps the current one', async () => {

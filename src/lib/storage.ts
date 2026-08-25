@@ -80,15 +80,18 @@ export function exportDb(db: VocabDb): string {
  * v1 'api' meant "fetched, from whichever source existed then" — always the free dictionary,
  * since Merriam-Webster support postdates every pre-migration word, so this is accurate, not a
  * guess, for real installs. v1 'manual' meant a hand-edit whose original fetched source (if any)
- * isn't recoverable, so it maps to source 'none'. definitionUpdatedAt is backfilled to addedAt in
- * every case (best available approximation — the true last-update time isn't recoverable either).
+ * isn't recoverable, so it maps to source 'none'. definitionUpdatedAt is backfilled to addedAt for
+ * 'api'/'manual' words (best available approximation — the true last-update time isn't recoverable
+ * either), but stays null for 'none' words: those never had real definition text, so null is exact,
+ * matching the same contract freshly-created never-fetched words get from initialDefinitionUpdatedAt.
  */
 function migrateWordV1ToV2(w: Record<string, unknown>): Record<string, unknown> {
   const v1Source = w.definitionSource;
   const definitionSource: DefinitionSource = v1Source === 'api' ? 'free-dictionary' : 'none';
   const manuallyEdited = v1Source === 'manual';
   const addedAt = typeof w.addedAt === 'number' ? w.addedAt : 0;
-  return { ...w, definitionSource, manuallyEdited, definitionUpdatedAt: addedAt };
+  const definitionUpdatedAt = v1Source === 'api' || v1Source === 'manual' ? addedAt : null;
+  return { ...w, definitionSource, manuallyEdited, definitionUpdatedAt };
 }
 
 export function parseBackup(text: string): VocabDb | null {
