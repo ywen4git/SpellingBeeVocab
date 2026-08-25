@@ -3,13 +3,17 @@ import { useVocab } from '../context/VocabProvider';
 import { useToast } from '../components/Toast';
 import { exportDb, mergeDb, parseBackup } from '../lib/storage';
 import type { VocabDb } from '../lib/types';
-import { clearMwApiKey, loadMwApiKey, saveMwApiKey, validateMwApiKey } from '../lib/dictionary';
+import {
+  clearMwApiKey, loadMwApiKey, saveMwApiKey, validateMwApiKey, type MwKeyValidation,
+} from '../lib/dictionary';
 
 function DictionarySourceSection() {
   const [keyInput, setKeyInput] = useState('');
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<'invalid' | 'network-error' | false>(false);
   const [active, setActive] = useState(() => loadMwApiKey() !== null);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<MwKeyValidation | null>(null);
 
   const handleSave = async () => {
     const trimmed = keyInput.trim();
@@ -25,6 +29,7 @@ function DictionarySourceSection() {
     saveMwApiKey(trimmed);
     setKeyInput('');
     setActive(true);
+    setTestResult(null);
   };
 
   const handleClear = () => {
@@ -32,6 +37,17 @@ function DictionarySourceSection() {
     setActive(false);
     setKeyInput('');
     setError(false);
+    setTestResult(null);
+  };
+
+  const handleTest = async () => {
+    const key = loadMwApiKey();
+    if (!key) return;
+    setTesting(true);
+    setTestResult(null);
+    const result = await validateMwApiKey(key);
+    setTesting(false);
+    setTestResult(result);
   };
 
   return (
@@ -43,12 +59,32 @@ function DictionarySourceSection() {
           : 'Using the free dictionary (default). Add a Merriam-Webster API key for definitions ordered by common usage.'}
       </p>
       {active ? (
-        <button
-          onClick={handleClear}
-          className="w-full min-h-[44px] rounded-xl bg-slate-200 py-2 text-sm font-semibold"
-        >
-          Remove key, use free dictionary
-        </button>
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={handleTest}
+            disabled={testing}
+            className="w-full min-h-[44px] rounded-xl bg-slate-200 py-2 text-sm font-semibold disabled:opacity-40"
+          >
+            {testing ? 'Testing…' : 'Test key'}
+          </button>
+          <button
+            onClick={handleClear}
+            className="w-full min-h-[44px] rounded-xl bg-slate-200 py-2 text-sm font-semibold"
+          >
+            Remove key, use free dictionary
+          </button>
+          {testResult === 'valid' && (
+            <p className="text-xs text-emerald-600">Key works — fetched a test entry successfully.</p>
+          )}
+          {testResult === 'invalid' && (
+            <p className="text-xs text-red-500">Couldn't verify that key — check it and try again.</p>
+          )}
+          {testResult === 'network-error' && (
+            <p className="text-xs text-red-500">
+              Couldn't reach Merriam-Webster to verify that key — check your connection and try again.
+            </p>
+          )}
+        </div>
       ) : (
         <>
           <input

@@ -114,3 +114,36 @@ it('clears a configured key and reverts to the free dictionary', async () => {
   await userEvent.click(screen.getByRole('button', { name: /remove key/i }));
   expect(screen.getByText(/using the free dictionary/i)).toBeInTheDocument();
 });
+
+it('tests a saved key on demand and reports success', async () => {
+  vi.mocked(validateMwApiKey).mockResolvedValueOnce('valid').mockResolvedValueOnce('valid');
+  seed(newWordEntry('AGARIC', 'a mushroom', 'free-dictionary', 1));
+  await openData();
+  await userEvent.type(screen.getByPlaceholderText(/merriam-webster api key/i), 'good-key');
+  await userEvent.click(screen.getByRole('button', { name: /save key/i }));
+  await screen.findByText(/using merriam-webster/i);
+  await userEvent.click(screen.getByRole('button', { name: /test key/i }));
+  expect(await screen.findByText(/key works/i)).toBeInTheDocument();
+});
+
+it('reports an invalid key when testing an already-saved key', async () => {
+  vi.mocked(validateMwApiKey).mockResolvedValueOnce('valid').mockResolvedValueOnce('invalid');
+  seed(newWordEntry('AGARIC', 'a mushroom', 'free-dictionary', 1));
+  await openData();
+  await userEvent.type(screen.getByPlaceholderText(/merriam-webster api key/i), 'good-key');
+  await userEvent.click(screen.getByRole('button', { name: /save key/i }));
+  await screen.findByText(/using merriam-webster/i);
+  await userEvent.click(screen.getByRole('button', { name: /test key/i }));
+  expect(await screen.findByText(/couldn't verify that key/i)).toBeInTheDocument();
+});
+
+it('reports a network error when testing an already-saved key while offline', async () => {
+  vi.mocked(validateMwApiKey).mockResolvedValueOnce('valid').mockResolvedValueOnce('network-error');
+  seed(newWordEntry('AGARIC', 'a mushroom', 'free-dictionary', 1));
+  await openData();
+  await userEvent.type(screen.getByPlaceholderText(/merriam-webster api key/i), 'good-key');
+  await userEvent.click(screen.getByRole('button', { name: /save key/i }));
+  await screen.findByText(/using merriam-webster/i);
+  await userEvent.click(screen.getByRole('button', { name: /test key/i }));
+  expect(await screen.findByText(/couldn't reach merriam-webster/i)).toBeInTheDocument();
+});
