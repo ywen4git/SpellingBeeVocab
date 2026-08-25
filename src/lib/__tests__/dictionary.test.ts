@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  clearMwApiKey, fetchAlternateDefinitions, fetchDefinitions, loadMwApiKey, saveMwApiKey, validateMwApiKey,
+  clearMwApiKey, fetchAlternateDefinitions, fetchDefinitions, fetchSingleDefinition, loadMwApiKey, saveMwApiKey, validateMwApiKey,
 } from '../dictionary';
 import { PLACEHOLDER_DEFINITION } from '../types';
 
@@ -110,6 +110,27 @@ describe('fetchDefinitions', () => {
     expect(r.definition).toBe(
       '(transitive verb) To move fast, with an object.\n\n(noun) A fast pace.\n\n(adjective) Operating rapidly.',
     );
+  });
+});
+
+describe('fetchSingleDefinition', () => {
+  it('fetches one word from the free dictionary when no key is configured', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ok(entry('noun', 'A fungus.'))));
+    const r = await fetchSingleDefinition('AGARIC');
+    expect(r).toEqual({ word: 'AGARIC', definition: '(noun) A fungus.', source: 'free-dictionary' });
+  });
+
+  it('reports a miss as source none with the placeholder', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => status(404)));
+    const r = await fetchSingleDefinition('XYZZY');
+    expect(r).toEqual({ word: 'XYZZY', definition: PLACEHOLDER_DEFINITION, source: 'none' });
+  });
+
+  it('uses Merriam-Webster first when a key is configured', async () => {
+    saveMwApiKey('good-key');
+    vi.stubGlobal('fetch', vi.fn(async () => ok([{ fl: 'noun', shortdef: ['A crown.'] }])));
+    const r = await fetchSingleDefinition('TIARA');
+    expect(r).toEqual({ word: 'TIARA', definition: '(noun) A crown.', source: 'merriam-webster' });
   });
 });
 

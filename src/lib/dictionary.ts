@@ -144,6 +144,14 @@ async function fetchOne(word: string, signal: AbortSignal | undefined, retryMs: 
   return grouped.length > 0 ? { definition: formatGroupedDefinition(grouped), source: 'free-dictionary' } : NOT_FOUND;
 }
 
+/** On-demand single-word fetch — same MW→fallback logic as the batch import path, but no
+ * rate-limit gap or progress callback (used for the Words screen's "check for updated
+ * definition" re-fetch, §8.4). */
+export async function fetchSingleDefinition(word: string, signal?: AbortSignal): Promise<DefinitionResult> {
+  const attempt = await fetchOne(word, signal, 2000);
+  return { word, definition: attempt.definition, source: attempt.source };
+}
+
 export async function fetchDefinitions(
   words: string[],
   opts: FetchOptions = {},
