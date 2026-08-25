@@ -176,3 +176,34 @@ it('renders a multi-sense definition as separate paragraphs', async () => {
   expect(definition).toHaveTextContent('(noun) A fungus.');
   expect(definition).toHaveTextContent('(verb) To forage for fungus.');
 });
+
+it('shows a source badge for a Merriam-Webster definition', async () => {
+  seed(newWordEntry('AGARIC', 'a mushroom', 'merriam-webster', 1));
+  await openWords();
+  await userEvent.click(screen.getByRole('button', { name: /AGARIC/ }));
+  expect(screen.getByText('Merriam-Webster')).toBeInTheDocument();
+});
+
+it('shows a manual badge even when the last fetch came from a provider', async () => {
+  seed({ ...newWordEntry('AGARIC', 'a hand-typed definition', 'free-dictionary', 1), manuallyEdited: true });
+  await openWords();
+  await userEvent.click(screen.getByRole('button', { name: /AGARIC/ }));
+  expect(screen.getByText('Manual')).toBeInTheDocument();
+});
+
+it('shows added and updated dates', async () => {
+  const addedAt = new Date(2026, 0, 5).getTime();
+  const updatedAt = new Date(2026, 0, 10).getTime();
+  seed({ ...newWordEntry('AGARIC', 'a mushroom', 'free-dictionary', addedAt), definitionUpdatedAt: updatedAt });
+  await openWords();
+  await userEvent.click(screen.getByRole('button', { name: /AGARIC/ }));
+  expect(screen.getByText(/Added Jan 5, 2026/)).toBeInTheDocument();
+  expect(screen.getByText(/Updated Jan 10, 2026/)).toBeInTheDocument();
+});
+
+it('omits the updated date when a definition has never been fetched or edited', async () => {
+  seed(newWordEntry('AGARIC', PLACEHOLDER_DEFINITION, 'none', 1));
+  await openWords();
+  await userEvent.click(screen.getByRole('button', { name: /AGARIC/ }));
+  expect(screen.queryByText(/Updated/)).not.toBeInTheDocument();
+});

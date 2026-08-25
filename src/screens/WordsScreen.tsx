@@ -1,8 +1,21 @@
 import { useState } from 'react';
 import { useVocab } from '../context/VocabProvider';
 import { DefinitionEditor } from '../components/DefinitionEditor';
+import { formatDate } from '../lib/format';
+import type { VocabWord } from '../lib/types';
 
 type Filter = 'all' | 'learning' | 'mastered';
+
+const SOURCE_BADGE: Record<'merriam-webster' | 'free-dictionary', { dot: string; label: string }> = {
+  'merriam-webster': { dot: 'bg-amber-400', label: 'Merriam-Webster' },
+  'free-dictionary': { dot: 'bg-slate-400', label: 'Free dictionary' },
+};
+
+function badgeFor(w: VocabWord): { dot: string; label: string } | null {
+  if (w.manuallyEdited) return { dot: 'bg-transparent', label: 'Manual' };
+  if (w.definitionSource === 'none') return null;
+  return SOURCE_BADGE[w.definitionSource];
+}
 
 export default function WordsScreen() {
   const { db, deleteWord, unmasterWord } = useVocab();
@@ -54,12 +67,15 @@ export default function WordsScreen() {
       )}
 
       <ul className="flex flex-col gap-2">
-        {rows.map((w) => (
+        {rows.map((w) => {
+          const badge = badgeFor(w);
+          return (
           <li key={w.word} className="rounded-2xl border border-slate-200 bg-white">
             <button
               onClick={() => open(w.word)}
               className="flex min-h-[44px] w-full items-center gap-3 px-4 py-2 text-left"
             >
+              {badge && <span aria-hidden className={`h-2 w-2 shrink-0 rounded-full ${badge.dot}`} />}
               <span className="flex-1 font-semibold">{w.word}</span>
               <span
                 className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
@@ -75,6 +91,11 @@ export default function WordsScreen() {
               <p className="truncate px-4 pb-3 text-xs text-slate-400">{w.definition}</p>
             ) : (
               <div className="flex flex-col gap-3 px-4 pb-4">
+                {badge && <p className="text-xs font-semibold text-slate-500">{badge.label}</p>}
+                <p className="text-xs text-slate-400">
+                  Added {formatDate(w.addedAt)}
+                  {w.definitionUpdatedAt !== null && ` · Updated ${formatDate(w.definitionUpdatedAt)}`}
+                </p>
                 {editing ? (
                   <DefinitionEditor word={w.word} initial={w.definition} onDone={() => setEditing(false)} />
                 ) : (
@@ -117,7 +138,8 @@ export default function WordsScreen() {
               </div>
             )}
           </li>
-        ))}
+          );
+        })}
       </ul>
     </div>
   );
