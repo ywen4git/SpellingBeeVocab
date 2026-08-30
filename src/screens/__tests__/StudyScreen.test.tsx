@@ -1,10 +1,22 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { beforeEach, vi } from 'vitest';
 import App from '../../App';
 import { DB_KEY } from '../../lib/storage';
 import { newWordEntry } from '../../lib/leitner';
 import { SCHEMA_VERSION } from '../../lib/types';
 import type { VocabWord } from '../../lib/types';
+
+const { speakWord, isSpeechSupported } = vi.hoisted(() => ({
+  speakWord: vi.fn(),
+  isSpeechSupported: vi.fn(() => true),
+}));
+vi.mock('../../lib/speech', () => ({ speakWord, isSpeechSupported }));
+
+beforeEach(() => {
+  speakWord.mockClear();
+  isSpeechSupported.mockReturnValue(true);
+});
 
 function seed(...words: VocabWord[]) {
   localStorage.setItem(DB_KEY, JSON.stringify({
@@ -91,4 +103,19 @@ it('renders a multi-sense definition as separate paragraphs', async () => {
   const definition = screen.getByText(/A fungus\./);
   expect(definition).toHaveClass('whitespace-pre-line');
   expect(definition).toHaveTextContent('(verb) To forage for fungus.');
+});
+
+it('speaks the word without flipping the card when the speaker button is tapped', async () => {
+  seed(newWordEntry('AGARIC', 'a gilled mushroom', 'free-dictionary', Date.now() - 1000));
+  render(<App />);
+  await userEvent.click(screen.getByRole('button', { name: /pronounce/i }));
+  expect(speakWord).toHaveBeenCalledWith('AGARIC');
+  expect(screen.queryByText(/gilled mushroom/)).not.toBeInTheDocument();
+});
+
+it('hides the speaker button when the browser has no speech synthesis support', async () => {
+  isSpeechSupported.mockReturnValue(false);
+  seed(newWordEntry('AGARIC', 'a gilled mushroom', 'free-dictionary', Date.now() - 1000));
+  render(<App />);
+  expect(screen.queryByRole('button', { name: /pronounce/i })).not.toBeInTheDocument();
 });

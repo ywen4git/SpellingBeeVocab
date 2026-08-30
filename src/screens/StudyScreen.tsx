@@ -3,6 +3,7 @@ import { useVocab } from '../context/VocabProvider';
 import { dueWords, nextDueAt } from '../lib/leitner';
 import { formatUntil } from '../lib/format';
 import { DefinitionEditor } from '../components/DefinitionEditor';
+import { isSpeechSupported, speakWord } from '../lib/speech';
 
 export default function StudyScreen() {
   const { db, gradeWord } = useVocab();
@@ -68,6 +69,15 @@ export default function StudyScreen() {
         {!flipped ? (
           <>
             <h2 className="text-3xl font-black tracking-wide text-slate-900">{current.word}</h2>
+            {isSpeechSupported() && (
+              <button
+                onClick={(e) => { e.stopPropagation(); speakWord(current.word); }}
+                aria-label={`Pronounce ${current.word}`}
+                className="mt-2 min-h-[44px] min-w-[44px] text-2xl"
+              >
+                🔊
+              </button>
+            )}
             <p className="mt-4 text-xs font-medium uppercase tracking-wider text-slate-400">Tap to reveal</p>
           </>
         ) : editing ? (

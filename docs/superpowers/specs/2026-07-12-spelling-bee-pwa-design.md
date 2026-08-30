@@ -39,7 +39,7 @@ words through a Leitner-box spaced-repetition flashcard system.
 
 - Multi-user, sync, or any server component.
 - Solving the puzzle or validating words against the day's 7 letters.
-- Audio pronunciation and manual word entry (see §12, P2 backlog).
+- Manual word entry (see §12, P2 backlog).
 
 ## 2. Tech stack
 
@@ -196,6 +196,16 @@ confirm pattern for destructive actions.
   due, since there'd be nothing to defer behind.
 - Empty state (nothing due): 🎉 "All caught up", the next-due time from
   `nextDueAt`, and a shortcut to the Add tab.
+- **Audio pronunciation** *(added 2026-08-30)*: a 🔊 button next to the word on
+  the card front (before flipping) speaks it via the browser's
+  `speechSynthesis` API (`src/lib/speech.ts`), `lang: 'en-US'`. Hidden when
+  `isSpeechSupported()` is false (feature-detects `window.speechSynthesis` —
+  absent in some older/embedded browsers), rather than showing a button that
+  would silently do nothing. Tapping it stops propagation so it doesn't flip
+  the card, and cancels any in-flight utterance first so rapid taps don't
+  queue up overlapping speech. Resolves the "audio pronunciation" P2 backlog
+  item (§12); Merriam-Webster's recorded audio (§8.3) was considered and
+  declined in favor of `speechSynthesis` working the same for every user.
 
 ### 6.2 Add (wizard, 3 steps in one screen)
 
@@ -620,9 +630,9 @@ fix for "definitions are often the uncommon meaning."
   load/save/clear. This mirrors the existing `lib/` convention of small,
   single-purpose, framework-free modules (§3).
 - **Out of scope here:** MW's response also includes recorded-audio
-  pronunciation references — not wired up now (§12 backlog item 1 still
-  covers audio, and can reuse this as its source instead of/alongside
-  `speechSynthesis` when it's picked up).
+  pronunciation references — not wired up. §6.1's audio pronunciation
+  (added 2026-08-30) uses `speechSynthesis` only, deliberately, so it works
+  the same for every user regardless of whether an MW key is configured.
 
 ### 8.4 Definition provenance, dates, and re-fetching *(added 2026-08-24)*
 
@@ -752,20 +762,20 @@ up a deploy.
 
 ## 12. P2 backlog (explicitly out of v1)
 
-1. **Audio pronunciation** — speak the word on the card front via
-   `speechSynthesis` (offline-capable), or via Merriam-Webster's recorded
-   audio (§8.3) if that ships first.
-2. **Manual word entry** — type a word, fetch its definition, commit to box 1.
-3. Automatic same-session re-show of a **missed** word specifically (still
+Resolves the "audio pronunciation" backlog item that previously sat here
+(added 2026-07-12, removed now that it's designed in §6.1, added 2026-08-30).
+
+1. **Manual word entry** — type a word, fetch its definition, commit to box 1.
+2. Automatic same-session re-show of a **missed** word specifically (still
    unimplemented: missing a card still sends it to box 1, due tomorrow, same
    as always). **Note:** this is distinct from the voluntary **Skip** button
    added 2026-07-27 (§6.1), which defers a card *before* grading it and never
    touches its schedule — Skip doesn't retire this backlog item.
-4. Surfacing blocklist-filtered words (`filteredUi`) as unchecked-by-default
+3. Surfacing blocklist-filtered words (`filteredUi`) as unchecked-by-default
    candidates instead of hiding them entirely; per-day review stats/streaks.
-5. Persisting the Study "Skip" order across a reload (currently pure
+4. Persisting the Study "Skip" order across a reload (currently pure
    session/component state — see §6.1).
-6. The pangram/continuation-page ambiguity noted at the end of §7.2 (an
+5. The pangram/continuation-page ambiguity noted at the end of §7.2 (an
    unpaired pangram word alone on its own line, on a screenshot with no real
    hive row, can be mistaken for one — known, low-frequency, not fixed).
 
